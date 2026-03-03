@@ -115,5 +115,48 @@ export const updateSchedulerConfig = (intervalMinutes, autoStart) =>
     params: { interval_minutes: intervalMinutes, auto_start: autoStart } 
   });
 
-export default API;
+// Database Dashboard
+export const getDatabaseOverview = () => API.get("/database/overview");
+export const getDatabaseHealth = () => API.get("/database/health");
+export const getDataFlow = () => API.get("/database/data-flow");
+export const getThresholdAlerts = () => API.get("/database/threshold-alerts");
 
+// Database Dashboard - MongoDB
+export const getMongoCollections = () => API.get("/database/collections");
+export const getCollectionSample = (name, page = 1, pageSize = 25) =>
+  API.get(`/database/collections/${name}/sample`, { params: { page, page_size: pageSize } });
+export const getCollectionSchema = (name) => API.get(`/database/collections/${name}/schema`);
+export const deleteCollectionDocument = (name, idField, idValue) =>
+  API.delete(`/database/collections/${name}/documents`, { data: { id_field: idField, id_value: idValue } });
+
+// Database Dashboard - PostgreSQL
+export const getPgTables = () => API.get("/database/tables");
+export const getTableSample = (name, page = 1, pageSize = 25) =>
+  API.get(`/database/tables/${name}/sample`, { params: { page, page_size: pageSize } });
+export const getTableSchema = (name) => API.get(`/database/tables/${name}/schema`);
+
+// Database Dashboard - Redis
+export const getRedisKeys = (prefix = "") => API.get("/database/redis/keys", { params: { prefix } });
+
+// Database Dashboard - Activity & Errors
+export const getDatabaseActivity = (limit = 50, collection = null) =>
+  API.get("/database/activity", { params: { limit, collection } });
+export const getDatabaseErrors = (limit = 50) =>
+  API.get("/database/errors", { params: { limit } });
+
+// Database Dashboard - Settings
+export const getDatabaseSettings = () => API.get("/database/settings");
+export const updateDatabaseSettings = (updates) => API.patch("/database/settings", updates);
+
+// Database Dashboard - Audit Log
+export const getAuditLog = (page = 1, pageSize = 50, filters = {}) =>
+  API.get("/database/audit-log", { params: { page, page_size: pageSize, ...filters } });
+
+// Cache
+export const getCacheStats = () => API.get("/cache/stats");
+export const flushCache = () => API.delete("/cache/flush");
+
+// Time-series
+export const getTimeseriesStats = () => API.get("/timeseries/stats");
+
+export default API;

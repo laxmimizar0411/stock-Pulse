@@ -12,6 +12,7 @@ import Reports from "@/pages/Reports";
 import Alerts from "@/pages/Alerts";
 import Backtest from "@/pages/Backtest";
 import DataPipeline from "@/pages/DataPipeline";
+import DatabaseDashboard from "@/pages/DatabaseDashboard";
 
 function App() {
   return (
@@ -29,6 +30,7 @@ function App() {
             <Route path="/news" element={<NewsHub />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/data-pipeline" element={<DataPipeline />} />
+            <Route path="/db-dashboard" element={<DatabaseDashboard />} />
           </Routes>
         </Layout>
       </BrowserRouter>

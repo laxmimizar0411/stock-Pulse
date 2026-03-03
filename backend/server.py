@@ -14,6 +14,8 @@ from services.mongo_utils import (
     sanitize_symbol, validate_update_fields,
     WATCHLIST_UPDATE_FIELDS, PORTFOLIO_UPDATE_FIELDS,
 )
+from services.db_dashboard_service import DatabaseDashboardService
+from routes.db_dashboard import router as db_dashboard_router, init_dashboard_router
 
 # Configure logging early
 logging.basicConfig(
@@ -2304,8 +2306,9 @@ async def get_screener_metrics():
     }
 
 
-# Include router
+# Include routers
 app.include_router(api_router)
+api_router.include_router(db_dashboard_router)
 
 # CORS middleware - default to localhost only, never open wildcard
 _cors_origins_env = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000')
@@ -2469,6 +2472,16 @@ async def startup_event():
     except Exception as e:
         logger.error(f"MongoDB connection failed: {e}")
         logger.error("Server will start but database operations will fail!")
+
+    # Initialize Database Dashboard service
+    try:
+        _dashboard_svc = DatabaseDashboardService(
+            mongo_db=db, ts_store=_ts_store, cache=cache
+        )
+        init_dashboard_router(_dashboard_svc)
+        logger.info("Database Dashboard service initialized")
+    except Exception as e:
+        logger.warning(f"Database Dashboard service init warning: {e}")
 
     # Ensure MongoDB indexes exist (idempotent - safe to call on every startup)
     try:
