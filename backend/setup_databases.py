@@ -4,7 +4,7 @@ StockPulse Database Setup Script
 
 Creates and verifies all three database layers + filesystem directories:
   1. PostgreSQL  – 4 time-series tables with indexes
-  2. MongoDB     – 10 collections with indexes
+  2. MongoDB     – 10 collections with indexes + schema validation
   3. Redis       – Connectivity verification
   4. Filesystem  – Required local directories
 
@@ -28,7 +28,6 @@ from dotenv import load_dotenv
 # Load .env from the same directory as this script
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
-load_dotenv(ROOT_DIR / '.env')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -155,49 +154,205 @@ CREATE INDEX IF NOT EXISTS idx_share_symbol ON shareholding_quarterly (symbol, q
 # ================================================================
 
 MONGO_COLLECTIONS = {
-    "watchlist": [
-        {"keys": [("symbol", 1)], "unique": True},
-    ],
-    "portfolio": [
-        {"keys": [("symbol", 1)], "unique": True},
-    ],
-    "alerts": [
-        {"keys": [("id", 1)], "unique": True},
-        {"keys": [("symbol", 1)]},
-        {"keys": [("status", 1)]},
-        {"keys": [("status", 1), ("symbol", 1)]},
-    ],
-    "stock_data": [
-        {"keys": [("symbol", 1)], "unique": True},
-        {"keys": [("last_updated", -1)]},
-        {"keys": [("stock_master.sector", 1)]},
-        {"keys": [("stock_master.market_cap_category", 1)]},
-    ],
-    "price_history": [
-        {"keys": [("symbol", 1), ("date", -1)], "unique": True},
-    ],
-    "extraction_log": [
-        {"keys": [("symbol", 1), ("source", 1), ("started_at", -1)]},
-        {"keys": [("status", 1)]},
-    ],
-    "quality_reports": [
-        {"keys": [("symbol", 1), ("generated_at", -1)]},
-    ],
-    "pipeline_jobs": [
-        {"keys": [("job_id", 1)], "unique": True},
-        {"keys": [("created_at", -1)]},
-        {"keys": [("status", 1)]},
-    ],
-    "news_articles": [
-        {"keys": [("published_date", -1)]},
-        {"keys": [("related_stocks", 1)]},
-        {"keys": [("sentiment", 1)]},
-        {"keys": [("source", 1), ("published_date", -1)]},
-    ],
-    "backtest_results": [
-        {"keys": [("symbol", 1), ("strategy", 1), ("created_at", -1)]},
-        {"keys": [("created_at", -1)]},
-    ],
+    "watchlist": {
+        "indexes": [
+            {"keys": [("symbol", 1)], "unique": True},
+        ],
+    },
+    "portfolio": {
+        "indexes": [
+            {"keys": [("symbol", 1)], "unique": True},
+        ],
+    },
+    "alerts": {
+        "indexes": [
+            {"keys": [("id", 1)], "unique": True},
+            {"keys": [("symbol", 1)]},
+            {"keys": [("status", 1)]},
+            {"keys": [("status", 1), ("symbol", 1)]},
+        ],
+    },
+    "stock_data": {
+        "indexes": [
+            {"keys": [("symbol", 1)], "unique": True},
+            {"keys": [("last_updated", -1)]},
+            {"keys": [("stock_master.sector", 1)]},
+            {"keys": [("stock_master.market_cap_category", 1)]},
+        ],
+    },
+    "price_history": {
+        "indexes": [
+            {"keys": [("symbol", 1), ("date", -1)], "unique": True},
+        ],
+    },
+    "extraction_log": {
+        "indexes": [
+            {"keys": [("symbol", 1), ("source", 1), ("started_at", -1)]},
+            {"keys": [("status", 1)]},
+            {"keys": [("started_at", 1)], "expireAfterSeconds": 7776000},  # 90 days TTL
+        ],
+    },
+    "quality_reports": {
+        "indexes": [
+            {"keys": [("symbol", 1), ("generated_at", -1)]},
+            {"keys": [("generated_at", 1)], "expireAfterSeconds": 7776000},  # 90 days TTL
+        ],
+    },
+    "pipeline_jobs": {
+        "indexes": [
+            {"keys": [("job_id", 1)], "unique": True},
+            {"keys": [("created_at", -1)]},
+            {"keys": [("status", 1)]},
+            {"keys": [("created_at", 1)], "expireAfterSeconds": 7776000},  # 90 days TTL
+        ],
+    },
+    "news_articles": {
+        "indexes": [
+            {"keys": [("id", 1)], "unique": True, "sparse": True},
+            {"keys": [("published_date", -1)]},
+            {"keys": [("related_stocks", 1)]},
+            {"keys": [("sentiment", 1)]},
+            {"keys": [("source", 1), ("published_date", -1)]},
+            {"keys": [("stored_at", 1)]},
+        ],
+    },
+    "backtest_results": {
+        "indexes": [
+            {"keys": [("id", 1)], "unique": True, "sparse": True},
+            {"keys": [("symbol", 1), ("strategy", 1), ("created_at", -1)]},
+            {"keys": [("created_at", -1)]},
+        ],
+    },
+}
+
+
+# ================================================================
+#  MongoDB Schema Validation Rules
+# ================================================================
+
+MONGO_SCHEMA_VALIDATORS = {
+    "watchlist": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["symbol", "name"],
+            "properties": {
+                "symbol": {
+                    "bsonType": "string",
+                    "pattern": "^[A-Z0-9&_.-]{1,20}$",
+                    "description": "Stock ticker symbol (uppercase, max 20 chars)",
+                },
+                "name": {
+                    "bsonType": "string",
+                    "maxLength": 200,
+                    "description": "Company name",
+                },
+                "target_price": {
+                    "bsonType": ["double", "int", "null"],
+                    "minimum": 0,
+                    "description": "Target price must be non-negative",
+                },
+                "stop_loss": {
+                    "bsonType": ["double", "int", "null"],
+                    "minimum": 0,
+                    "description": "Stop-loss must be non-negative",
+                },
+                "notes": {
+                    "bsonType": ["string", "null"],
+                    "maxLength": 2000,
+                    "description": "User notes (max 2000 chars)",
+                },
+                "alerts_enabled": {
+                    "bsonType": "bool",
+                },
+            },
+        }
+    },
+    "portfolio": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["symbol", "name", "quantity", "avg_buy_price"],
+            "properties": {
+                "symbol": {
+                    "bsonType": "string",
+                    "pattern": "^[A-Z0-9&_.-]{1,20}$",
+                    "description": "Stock ticker symbol",
+                },
+                "name": {
+                    "bsonType": "string",
+                    "maxLength": 200,
+                },
+                "quantity": {
+                    "bsonType": ["int", "double"],
+                    "minimum": 0,
+                    "description": "Number of shares must be non-negative",
+                },
+                "avg_buy_price": {
+                    "bsonType": ["double", "int"],
+                    "minimum": 0,
+                    "description": "Average buy price must be non-negative",
+                },
+                "buy_date": {
+                    "bsonType": "string",
+                },
+            },
+        }
+    },
+    "alerts": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["id", "symbol", "condition", "target_value", "status"],
+            "properties": {
+                "id": {
+                    "bsonType": "string",
+                    "pattern": "^alert_[a-f0-9]{12}$",
+                    "description": "Alert ID format: alert_<12 hex chars>",
+                },
+                "symbol": {
+                    "bsonType": "string",
+                    "pattern": "^[A-Z0-9&_.-]{1,20}$",
+                },
+                "condition": {
+                    "bsonType": "string",
+                    "enum": ["price_above", "price_below", "price_crosses", "percent_change", "volume_spike"],
+                },
+                "target_value": {
+                    "bsonType": ["double", "int"],
+                    "minimum": 0,
+                },
+                "priority": {
+                    "bsonType": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                },
+                "status": {
+                    "bsonType": "string",
+                    "enum": ["active", "triggered", "expired", "disabled"],
+                },
+                "trigger_count": {
+                    "bsonType": "int",
+                    "minimum": 0,
+                },
+            },
+        }
+    },
+    "stock_data": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["symbol"],
+            "properties": {
+                "symbol": {
+                    "bsonType": "string",
+                    "pattern": "^[A-Z0-9&_.-]{1,20}$",
+                },
+                "company_name": {
+                    "bsonType": ["string", "null"],
+                    "maxLength": 300,
+                },
+                "last_updated": {
+                    "bsonType": "string",
+                },
+            },
+        }
+    },
 }
 
 
@@ -209,11 +364,6 @@ async def setup_postgresql(check_only: bool = False) -> bool:
     """Create PostgreSQL tables and indexes, or just verify they exist."""
     dsn = os.environ.get("TIMESERIES_DSN", "postgresql://localhost:5432/stockpulse_ts")
 
-async def setup_postgresql(dsn: str = None, check_only: bool = False):
-    """Create PostgreSQL tables and indexes."""
-    if dsn is None:
-        dsn = os.environ.get('TIMESERIES_DSN', 'postgresql://localhost:5432/stockpulse_ts')
-    
     try:
         import asyncpg
     except ImportError:
@@ -227,7 +377,7 @@ async def setup_postgresql(dsn: str = None, check_only: bool = False):
         except asyncpg.InvalidCatalogNameError:
             db_name = dsn.rsplit("/", 1)[-1].split("?")[0]
             base_dsn = dsn.rsplit("/", 1)[0] + "/postgres"
-            logger.info(f"Database '{db_name}' doesn't exist — creating it...")
+            logger.info(f"Database '{db_name}' doesn't exist - creating it...")
             sys_conn = await asyncpg.connect(base_dsn)
             await sys_conn.execute(f"CREATE DATABASE {db_name}")
             await sys_conn.close()
@@ -256,220 +406,10 @@ async def setup_postgresql(dsn: str = None, check_only: bool = False):
         # Execute the full schema (idempotent via IF NOT EXISTS)
         await conn.execute(POSTGRESQL_SCHEMA)
 
-        # Verify
+        # Verify tables
         tables = await conn.fetch(
             """SELECT table_name,
                       (SELECT COUNT(*) FROM information_schema.columns c
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-        )
-        table_names = [t["table_name"] for t in tables]
-        logger.info(f"PostgreSQL setup complete. Tables: {table_names}")
-
-        await conn.close()
-        return True
-
-    except Exception as e:
-        logger.error(f"PostgreSQL setup failed: {e}")
-        return False
-
-
-# ================================================================
-# MongoDB Setup
-# ================================================================
-
-MONGO_COLLECTIONS = {
-    "watchlist": {
-        "indexes": [
-            {"keys": [("symbol", 1)], "unique": True},
-        ]
-    },
-    "portfolio": {
-        "indexes": [
-            {"keys": [("symbol", 1)], "unique": True},
-        ]
-    },
-    "alerts": {
-        "indexes": [
-            {"keys": [("id", 1)], "unique": True},
-            {"keys": [("symbol", 1)]},
-            {"keys": [("status", 1)]},
-            {"keys": [("status", 1), ("symbol", 1)]},
-        ]
-    },
-    "stock_data": {
-        "indexes": [
-            {"keys": [("symbol", 1)], "unique": True},
-            {"keys": [("last_updated", -1)]},
-            {"keys": [("stock_master.sector", 1)]},
-            {"keys": [("stock_master.market_cap_category", 1)]},
-        ]
-    },
-    "price_history": {
-        "indexes": [
-            {"keys": [("symbol", 1), ("date", -1)], "unique": True},
-        ]
-    },
-    "extraction_log": {
-        "indexes": [
-            {"keys": [("symbol", 1), ("source", 1), ("started_at", -1)]},
-            {"keys": [("status", 1)]},
-        ]
-    },
-    "quality_reports": {
-        "indexes": [
-            {"keys": [("symbol", 1), ("generated_at", -1)]},
-        ]
-    },
-    "pipeline_jobs": {
-        "indexes": [
-            {"keys": [("job_id", 1)], "unique": True},
-            {"keys": [("created_at", -1)]},
-            {"keys": [("status", 1)]},
-        ]
-    },
-    "news_articles": {
-        "indexes": [
-            {"keys": [("published_date", -1)]},
-            {"keys": [("related_stocks", 1)]},
-            {"keys": [("sentiment", 1)]},
-            {"keys": [("source", 1), ("published_date", -1)]},
-        ]
-    },
-    "backtest_results": {
-        "indexes": [
-            {"keys": [("symbol", 1), ("strategy", 1), ("created_at", -1)]},
-            {"keys": [("created_at", -1)]},
-        ]
-    },
-}
-
-
-async def setup_mongodb(mongo_url: str, db_name: str, check_only: bool = False):
-    """Create MongoDB collections and indexes."""
-    
-    try:
-        conn = await asyncpg.connect(dsn)
-        logger.info(f"Connected to PostgreSQL: {dsn}")
-        
-        # Execute schema
-        await conn.execute(POSTGRESQL_SCHEMA)
-        
-        # Check for TimescaleDB extension and apply optimizations if available
-        timescaledb_available = False
-        try:
-            # Try to create extension if it doesn't exist
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS timescaledb;")
-            timescaledb_available = True
-            logger.info("⚡ TimescaleDB extension detected and enabled")
-        except asyncpg.exceptions.InsufficientPrivilegeError:
-            logger.warning("Not enough privileges to create timescaledb extension")
-        except asyncpg.exceptions.UndefinedFileError:
-            logger.info("TimescaleDB not installed on host. Proceeding with standard PostgreSQL.")
-        except Exception as e:
-            logger.warning(f"Could not enable TimescaleDB: {e}")
-            
-        if timescaledb_available:
-            logger.info("Applying TimescaleDB optimizations (Hypertables, Compression, Continuous Aggregates)...")
-            try:
-                # 1. Convert to Hypertables (if not already)
-                hypertable_check = await conn.fetchval(
-                    "SELECT count(*) FROM _timescaledb_catalog.hypertable WHERE table_name = 'prices_daily';"
-                )
-                
-                if hypertable_check == 0:
-                    logger.info("  -> Converting prices_daily to hypertable")
-                    await conn.execute(
-                        "SELECT create_hypertable('prices_daily', by_range('date', INTERVAL '1 month'), if_not_exists => TRUE);"
-                    )
-                    logger.info("  -> Converting technical_indicators to hypertable")
-                    await conn.execute(
-                        "SELECT create_hypertable('technical_indicators', by_range('date', INTERVAL '1 month'), if_not_exists => TRUE);"
-                    )
-                    
-                    # 2. Setup Compression Policies
-                    logger.info("  -> Setting up compression policies (data > 6 months)")
-                    await conn.execute("""
-                        ALTER TABLE prices_daily SET (
-                            timescaledb.compress,
-                            timescaledb.compress_segmentby = 'symbol',
-                            timescaledb.compress_orderby = 'date DESC'
-                        );
-                    """)
-                    await conn.execute("""
-                        ALTER TABLE technical_indicators SET (
-                            timescaledb.compress,
-                            timescaledb.compress_segmentby = 'symbol',
-                            timescaledb.compress_orderby = 'date DESC'
-                        );
-                    """)
-                    
-                    try:
-                        await conn.execute("SELECT add_compression_policy('prices_daily', INTERVAL '6 months');")
-                        await conn.execute("SELECT add_compression_policy('technical_indicators', INTERVAL '6 months');")
-                    except Exception as e:
-                        if "already exists" not in str(e):
-                            raise
-                    
-                    # 3. Setup Continuous Aggregates (Weekly and Monthly)
-                    logger.info("  -> Creating continuous aggregates for weekly/monthly OHLCV")
-                    await conn.execute("""
-                        CREATE MATERIALIZED VIEW IF NOT EXISTS prices_weekly
-                        WITH (timescaledb.continuous) AS
-                        SELECT
-                            symbol,
-                            time_bucket('1 week', date) AS week,
-                            first(open, date) AS open,
-                            max(high) AS high,
-                            min(low) AS low,
-                            last(close, date) AS close,
-                            sum(volume) AS volume
-                        FROM prices_daily
-                        GROUP BY symbol, week;
-                    """)
-                    
-                    await conn.execute("""
-                        CREATE MATERIALIZED VIEW IF NOT EXISTS prices_monthly
-                        WITH (timescaledb.continuous) AS
-                        SELECT
-                            symbol,
-                            time_bucket('1 month', date) AS month,
-                            first(open, date) AS open,
-                            max(high) AS high,
-                            min(low) AS low,
-                            last(close, date) AS close,
-                            sum(volume) AS volume
-                        FROM prices_daily
-                        GROUP BY symbol, month;
-                    """)
-                    
-                    try:
-                        await conn.execute("""
-                            SELECT add_continuous_aggregate_policy('prices_weekly',
-                                start_offset => INTERVAL '1 month',
-                                end_offset => INTERVAL '1 day',
-                                schedule_interval => INTERVAL '1 day');
-                        """)
-                    except Exception as e:
-                        if "already exists" not in str(e):
-                            logger.warning(f"Failed to add weekly refresh policy: {e}")
-                            
-                    try:
-                        await conn.execute("""
-                            SELECT add_continuous_aggregate_policy('prices_monthly',
-                                start_offset => INTERVAL '6 months',
-                                end_offset => INTERVAL '1 day',
-                                schedule_interval => INTERVAL '1 week');
-                        """)
-                    except Exception as e:
-                        if "already exists" not in str(e):
-                            logger.warning(f"Failed to add monthly refresh policy: {e}")
-            except Exception as e:
-                logger.error(f"Error applying TimescaleDB optimizations: {e}")
-        
-        # Verify tables
-        tables = await conn.fetch(
-            """SELECT table_name, 
-                      (SELECT COUNT(*) FROM information_schema.columns c 
                        WHERE c.table_name = t.table_name AND c.table_schema = 'public') as col_count
                FROM information_schema.tables t
                WHERE table_schema = 'public'
@@ -489,6 +429,52 @@ async def setup_mongodb(mongo_url: str, db_name: str, check_only: bool = False):
         for idx in indexes:
             logger.info(f"  {idx['tablename']}.{idx['indexname']}")
 
+        # Check for TimescaleDB and apply optimizations if available
+        try:
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS timescaledb;")
+            logger.info("TimescaleDB extension detected and enabled")
+
+            hypertable_check = await conn.fetchval(
+                "SELECT count(*) FROM _timescaledb_catalog.hypertable WHERE table_name = 'prices_daily';"
+            )
+            if hypertable_check == 0:
+                logger.info("  -> Converting prices_daily to hypertable")
+                await conn.execute(
+                    "SELECT create_hypertable('prices_daily', by_range('date', INTERVAL '1 month'), if_not_exists => TRUE);"
+                )
+                logger.info("  -> Converting technical_indicators to hypertable")
+                await conn.execute(
+                    "SELECT create_hypertable('technical_indicators', by_range('date', INTERVAL '1 month'), if_not_exists => TRUE);"
+                )
+
+                logger.info("  -> Setting up compression policies")
+                await conn.execute("""
+                    ALTER TABLE prices_daily SET (
+                        timescaledb.compress,
+                        timescaledb.compress_segmentby = 'symbol',
+                        timescaledb.compress_orderby = 'date DESC'
+                    );
+                """)
+                await conn.execute("""
+                    ALTER TABLE technical_indicators SET (
+                        timescaledb.compress,
+                        timescaledb.compress_segmentby = 'symbol',
+                        timescaledb.compress_orderby = 'date DESC'
+                    );
+                """)
+                try:
+                    await conn.execute("SELECT add_compression_policy('prices_daily', INTERVAL '6 months');")
+                    await conn.execute("SELECT add_compression_policy('technical_indicators', INTERVAL '6 months');")
+                except Exception as e:
+                    if "already exists" not in str(e):
+                        raise
+
+        except Exception as e:
+            if "timescaledb" in str(e).lower() or "extension" in str(e).lower():
+                logger.info("TimescaleDB not available. Proceeding with standard PostgreSQL.")
+            else:
+                logger.warning(f"TimescaleDB setup note: {e}")
+
         await conn.close()
         logger.info("PostgreSQL setup complete")
         return True
@@ -503,17 +489,10 @@ async def setup_mongodb(mongo_url: str, db_name: str, check_only: bool = False):
 # ================================================================
 
 async def setup_mongodb(check_only: bool = False) -> bool:
-    """Create MongoDB collections and indexes, or just verify they exist."""
+    """Create MongoDB collections, indexes, and schema validation."""
     mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
     db_name = os.environ.get("MONGO_DB_NAME", os.environ.get("DB_NAME", "stockpulse"))
 
-async def setup_mongodb(mongo_url: str = None, db_name: str = None, check_only: bool = False):
-    """Create MongoDB indexes for all collections."""
-    if mongo_url is None:
-        mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-    if db_name is None:
-        db_name = os.environ.get('MONGO_DB_NAME', os.environ.get('DB_NAME', 'stockpulse'))
-    
     try:
         from motor.motor_asyncio import AsyncIOMotorClient
     except ImportError:
@@ -533,7 +512,8 @@ async def setup_mongodb(mongo_url: str = None, db_name: str = None, check_only: 
             for name in MONGO_COLLECTIONS:
                 if name in existing:
                     count = await db[name].count_documents({})
-                    logger.info(f"  [OK] {name}: {count} documents")
+                    indexes = await db[name].index_information()
+                    logger.info(f"  [OK] {name}: {count} documents, {len(indexes)} indexes")
                 else:
                     logger.warning(f"  [MISSING] {name}")
             client.close()
@@ -541,21 +521,50 @@ async def setup_mongodb(mongo_url: str = None, db_name: str = None, check_only: 
 
         existing = await db.list_collection_names()
 
-        for coll_name, indexes in MONGO_COLLECTIONS.items():
+        for coll_name, coll_config in MONGO_COLLECTIONS.items():
             # Create collection if it doesn't exist
             if coll_name not in existing:
-                await db.create_collection(coll_name)
-                logger.info(f"  Created collection: {coll_name}")
+                # Apply schema validation if defined
+                if coll_name in MONGO_SCHEMA_VALIDATORS:
+                    await db.create_collection(
+                        coll_name,
+                        validator=MONGO_SCHEMA_VALIDATORS[coll_name],
+                        validationLevel="moderate",
+                        validationAction="warn",
+                    )
+                    logger.info(f"  Created collection with schema validation: {coll_name}")
+                else:
+                    await db.create_collection(coll_name)
+                    logger.info(f"  Created collection: {coll_name}")
             else:
-                logger.info(f"  Collection exists: {coll_name}")
+                # Apply/update schema validation on existing collections
+                if coll_name in MONGO_SCHEMA_VALIDATORS:
+                    try:
+                        await db.command(
+                            "collMod",
+                            coll_name,
+                            validator=MONGO_SCHEMA_VALIDATORS[coll_name],
+                            validationLevel="moderate",
+                            validationAction="warn",
+                        )
+                        logger.info(f"  Updated schema validation: {coll_name}")
+                    except Exception as e:
+                        logger.warning(f"  Schema validation update for {coll_name}: {e}")
+                else:
+                    logger.info(f"  Collection exists: {coll_name}")
 
             # Create indexes
             collection = db[coll_name]
+            indexes = coll_config.get("indexes", [])
             for idx_conf in indexes:
                 try:
                     kwargs = {}
                     if idx_conf.get("unique"):
                         kwargs["unique"] = True
+                    if idx_conf.get("sparse"):
+                        kwargs["sparse"] = True
+                    if idx_conf.get("expireAfterSeconds") is not None:
+                        kwargs["expireAfterSeconds"] = idx_conf["expireAfterSeconds"]
                     await collection.create_index(idx_conf["keys"], **kwargs)
                 except Exception as e:
                     logger.warning(f"  Index note for {coll_name}: {e}")
@@ -602,7 +611,7 @@ def check_redis() -> bool:
 
     except Exception as e:
         logger.warning(f"Redis not available: {e}")
-        logger.info("  (Redis is optional — the app falls back to in-memory cache.)")
+        logger.info("  (Redis is optional - the app falls back to in-memory cache.)")
         return False
 
 
@@ -698,9 +707,3 @@ async def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))
-        logger.warning("\nSome databases could not be set up. Check the errors above.")
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
