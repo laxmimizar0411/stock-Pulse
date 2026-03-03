@@ -30,10 +30,19 @@ next-env.d.ts
 dist/
 dist
 
-# Environment files (comprehensive coverage)
+# Environment files (keep .env.example for documentation)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+backend/.env
+frontend/.env
 
+# Secrets and credentials
 *token.json*
 *credentials.json*
+*.pem
 
 # Logs and debug files
 npm-debug.log*
@@ -44,7 +53,6 @@ dump.rdb
 
 # System files
 .DS_Store
-*.pem
 
 # Python
 __pycache__/
@@ -77,39 +85,13 @@ agenthub/agents/youtube/db
 .cache/
 
 # Mobile development
-android-sdk/ frontend/node_modules/.cache/default-development/0.pack
-frontend/node_modules/.cache/default-development/0.pack
-frontend/node_modules/.cache/default-development/1.pack
-frontend/node_modules/.cache/default-development/2.pack
-frontend/node_modules/.cache/default-development/4.pack
--e 
-# Environment files (keep .env.example for documentation)
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-!.env.example
-backend/.env
-frontend/.env
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
-.env
+android-sdk/
+frontend/node_modules/.cache/default-development/*.pack
+
+# Database backups and dumps (keep .gitkeep files)
+backend/backups/*
+!backend/backups/.gitkeep
+*.bson
+*.dump
+mongo_dump_*/
+mongodump_*/

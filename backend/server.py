@@ -10,6 +10,10 @@ from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone
 import asyncio
+from services.mongo_utils import (
+    sanitize_symbol, validate_update_fields,
+    WATCHLIST_UPDATE_FIELDS, PORTFOLIO_UPDATE_FIELDS,
+)
 
 # Configure logging early
 logging.basicConfig(
@@ -54,10 +58,19 @@ except ImportError:
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
+# MongoDB connection with production-grade settings
 mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 db_name = os.environ.get('MONGO_DB_NAME', os.environ.get('DB_NAME', 'stockpulse'))
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(
+    mongo_url,
+    serverSelectionTimeoutMS=5000,
+    connectTimeoutMS=10000,
+    socketTimeoutMS=30000,
+    maxPoolSize=20,
+    minPoolSize=1,
+    retryWrites=True,
+    retryReads=True,
+)
 db = client[db_name]
 
 # Redis connection
@@ -745,7 +758,11 @@ async def add_to_watchlist(item: WatchlistItem):
 @api_router.delete("/watchlist/{symbol}")
 async def remove_from_watchlist(symbol: str):
     """Remove stock from watchlist"""
-    result = await db.watchlist.delete_one({"symbol": symbol.upper()})
+    try:
+        clean_symbol = sanitize_symbol(symbol)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    result = await db.watchlist.delete_one({"symbol": clean_symbol})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Stock not in watchlist")
     return {"message": "Removed from watchlist"}
@@ -754,9 +771,18 @@ async def remove_from_watchlist(symbol: str):
 @api_router.put("/watchlist/{symbol}")
 async def update_watchlist_item(symbol: str, updates: Dict[str, Any]):
     """Update watchlist item (target price, stop loss, notes)"""
+    try:
+        clean_symbol = sanitize_symbol(symbol)
+        safe_updates = validate_update_fields(updates, WATCHLIST_UPDATE_FIELDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not safe_updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
     result = await db.watchlist.update_one(
-        {"symbol": symbol.upper()},
-        {"$set": updates}
+        {"symbol": clean_symbol},
+        {"$set": safe_updates}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Stock not in watchlist")
@@ -865,7 +891,11 @@ async def add_to_portfolio(holding: PortfolioHolding):
 @api_router.delete("/portfolio/{symbol}")
 async def remove_from_portfolio(symbol: str):
     """Remove holding from portfolio"""
-    result = await db.portfolio.delete_one({"symbol": symbol.upper()})
+    try:
+        clean_symbol = sanitize_symbol(symbol)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    result = await db.portfolio.delete_one({"symbol": clean_symbol})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Holding not found")
     return {"message": "Removed from portfolio"}
@@ -874,9 +904,18 @@ async def remove_from_portfolio(symbol: str):
 @api_router.put("/portfolio/{symbol}")
 async def update_portfolio_holding(symbol: str, updates: Dict[str, Any]):
     """Update portfolio holding"""
+    try:
+        clean_symbol = sanitize_symbol(symbol)
+        safe_updates = validate_update_fields(updates, PORTFOLIO_UPDATE_FIELDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not safe_updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
     result = await db.portfolio.update_one(
-        {"symbol": symbol.upper()},
-        {"$set": updates}
+        {"symbol": clean_symbol},
+        {"$set": safe_updates}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Holding not found")
@@ -902,11 +941,11 @@ async def get_news(
             query["related_stocks"] = symbol.upper()
         if sentiment:
             query["sentiment"] = sentiment.upper()
-        
+
         cursor = db.news_articles.find(query, {"_id": 0}).sort("published_date", -1).limit(limit)
         mongo_news = await cursor.to_list(length=limit)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to fetch news from MongoDB: {e}")
     
     if mongo_news:
         return mongo_news
@@ -1338,20 +1377,10 @@ async def run_backtest_endpoint(config: BacktestConfig):
         # Run the backtest
         result = await run_backtest(config, price_history)
 
-        # Persist backtest result to MongoDB
-        try:
-            result_doc = result.model_dump()
-            result_doc["created_at"] = datetime.now(timezone.utc).isoformat()
-            result_doc["id"] = str(uuid.uuid4())
-            insert_doc = {**result_doc}
-            await db.backtest_results.insert_one(insert_doc)
-        except Exception as save_err:
-            logger.warning(f"Could not save backtest result: {save_err}")
-
-        
-        # Persist backtest result to MongoDB
+        # Persist backtest result to MongoDB (single save with all metadata)
         try:
             result_dict = result.model_dump()
+            result_dict["id"] = str(uuid.uuid4())
             result_dict["symbol"] = symbol
             result_dict["strategy"] = config.strategy.value if hasattr(config.strategy, 'value') else str(config.strategy)
             result_dict["created_at"] = datetime.now(timezone.utc).isoformat()
@@ -1360,7 +1389,8 @@ async def run_backtest_endpoint(config: BacktestConfig):
                 "start_date": config.start_date,
                 "end_date": config.end_date,
             }
-            await db.backtest_results.insert_one(result_dict)
+            insert_doc = {**result_dict}
+            await db.backtest_results.insert_one(insert_doc)
             logger.info(f"Backtest result saved for {symbol}")
         except Exception as save_err:
             logger.warning(f"Failed to save backtest result: {save_err}")
@@ -2277,12 +2307,14 @@ async def get_screener_metrics():
 # Include router
 app.include_router(api_router)
 
-# CORS middleware
+# CORS middleware - default to localhost only, never open wildcard
+_cors_origins_env = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000')
+_cors_origins = [origin.strip() for origin in _cors_origins_env.split(',') if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -2336,7 +2368,7 @@ async def websocket_with_id(websocket: WebSocket, client_id: str):
 async def _ensure_mongodb_indexes(database):
     """Create MongoDB indexes at startup for all collections.
 
-    Indexes are idempotent — calling create_index on an existing index is a no-op.
+    Indexes are idempotent - calling create_index on an existing index is a no-op.
     This ensures performance regardless of whether setup_databases.py was run first.
     """
     try:
@@ -2346,10 +2378,11 @@ async def _ensure_mongodb_indexes(database):
         # Portfolio
         await database.portfolio.create_index("symbol", unique=True)
 
-        # Alerts
+        # Alerts (includes compound index for filtered queries)
         await database.alerts.create_index("id", unique=True)
         await database.alerts.create_index("symbol")
         await database.alerts.create_index("status")
+        await database.alerts.create_index([("status", 1), ("symbol", 1)])
 
         # Stock data (from extraction pipeline)
         await database.stock_data.create_index("symbol", unique=True)
@@ -2362,26 +2395,41 @@ async def _ensure_mongodb_indexes(database):
             [("symbol", 1), ("date", -1)], unique=True
         )
 
-        # Extraction log
+        # Extraction log (with TTL for auto-cleanup after 90 days)
         await database.extraction_log.create_index(
             [("symbol", 1), ("source", 1), ("started_at", -1)]
         )
+        await database.extraction_log.create_index("status")
+        await database.extraction_log.create_index(
+            [("started_at", 1)], expireAfterSeconds=7776000
+        )
 
-        # Quality reports
+        # Quality reports (with TTL for auto-cleanup after 90 days)
         await database.quality_reports.create_index(
             [("symbol", 1), ("generated_at", -1)]
         )
+        await database.quality_reports.create_index(
+            [("generated_at", 1)], expireAfterSeconds=7776000
+        )
 
-        # Pipeline jobs
+        # Pipeline jobs (with TTL for auto-cleanup after 90 days)
         await database.pipeline_jobs.create_index("job_id", unique=True)
         await database.pipeline_jobs.create_index([("created_at", -1)])
+        await database.pipeline_jobs.create_index("status")
+        await database.pipeline_jobs.create_index(
+            [("created_at", 1)], expireAfterSeconds=7776000
+        )
 
-        # News articles
+        # News articles (includes id index and stored_at for cache queries)
+        await database.news_articles.create_index("id", unique=True, sparse=True)
         await database.news_articles.create_index([("published_date", -1)])
         await database.news_articles.create_index("related_stocks")
         await database.news_articles.create_index("sentiment")
+        await database.news_articles.create_index([("source", 1), ("published_date", -1)])
+        await database.news_articles.create_index("stored_at")
 
-        # Backtest results
+        # Backtest results (includes id index for single-result lookups)
+        await database.backtest_results.create_index("id", unique=True, sparse=True)
         await database.backtest_results.create_index(
             [("symbol", 1), ("strategy", 1), ("created_at", -1)]
         )
@@ -2413,7 +2461,16 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Time-series store not available: {e}")
 
-    # Ensure MongoDB indexes exist (idempotent — safe to call on every startup)
+    # Verify MongoDB connectivity before proceeding
+    try:
+        await client.admin.command("ping")
+        server_info = await client.server_info()
+        logger.info(f"MongoDB connected: version {server_info.get('version', 'unknown')}")
+    except Exception as e:
+        logger.error(f"MongoDB connection failed: {e}")
+        logger.error("Server will start but database operations will fail!")
+
+    # Ensure MongoDB indexes exist (idempotent - safe to call on every startup)
     try:
         await _ensure_mongodb_indexes(db)
         logger.info("MongoDB indexes verified")
