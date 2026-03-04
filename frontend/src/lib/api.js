@@ -139,10 +139,10 @@ export const getTableSchema = (name) => API.get(`/database/tables/${name}/schema
 export const getRedisKeys = (prefix = "") => API.get("/database/redis/keys", { params: { prefix } });
 
 // Database Dashboard - Activity & Errors
-export const getDatabaseActivity = (limit = 50, collection = null) =>
-  API.get("/database/activity", { params: { limit, collection } });
-export const getDatabaseErrors = (limit = 50) =>
-  API.get("/database/errors", { params: { limit } });
+export const getDatabaseActivity = (limit = 50, collection = null, since = null, until = null) =>
+  API.get("/database/activity", { params: { limit, collection, since, until } });
+export const getDatabaseErrors = (limit = 50, since = null, until = null) =>
+  API.get("/database/errors", { params: { limit, since, until } });
 export const getErrorTrend = (days = 7) =>
   API.get("/database/errors/trend", { params: { days } });
 
@@ -153,6 +153,7 @@ export const updateDatabaseSettings = (updates) => API.patch("/database/settings
 // Database Dashboard - Audit Log
 export const getAuditLog = (page = 1, pageSize = 50, filters = {}) =>
   API.get("/database/audit-log", { params: { page, page_size: pageSize, ...filters } });
+export const writeAuditLog = (entry) => API.post("/database/audit-log", entry);
 
 // Cache
 export const getCacheStats = () => API.get("/cache/stats");

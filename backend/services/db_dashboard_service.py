@@ -9,7 +9,7 @@ service - the frontend never connects directly.
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -591,7 +591,8 @@ class DatabaseDashboardService:
     # ===============================================================
 
     async def get_recent_activity(
-        self, limit: int = 50, collection_filter: str = None
+        self, limit: int = 50, collection_filter: str = None,
+        since: str = None, until: str = None,
     ) -> List[Dict[str, Any]]:
         """Get recent database activity from extraction_log and pipeline_jobs."""
         if limit > 500:
@@ -599,12 +600,22 @@ class DatabaseDashboardService:
 
         activity = []
 
+        # Build date range query fragment for MongoDB
+        def _date_query(field: str) -> Dict[str, Any]:
+            q: Dict[str, Any] = {}
+            if since:
+                q.setdefault(field, {})["$gte"] = since
+            if until:
+                q.setdefault(field, {})["$lte"] = until
+            return q
+
         # Pipeline jobs
         if not collection_filter or collection_filter == "pipeline_jobs":
             try:
+                query = _date_query("created_at")
                 cursor = (
                     self.db.pipeline_jobs
-                    .find({}, {"_id": 0})
+                    .find(query, {"_id": 0})
                     .sort("created_at", -1)
                     .limit(min(limit, 50))
                 )
@@ -628,9 +639,10 @@ class DatabaseDashboardService:
         # Extraction log entries
         if not collection_filter or collection_filter == "extraction_log":
             try:
+                query = _date_query("started_at")
                 cursor = (
                     self.db.extraction_log
-                    .find({}, {"_id": 0})
+                    .find(query, {"_id": 0})
                     .sort("started_at", -1)
                     .limit(min(limit, 50))
                 )
@@ -654,9 +666,10 @@ class DatabaseDashboardService:
         # Audit log entries
         if not collection_filter or collection_filter == "audit_log":
             try:
+                query = _date_query("timestamp")
                 cursor = (
                     self.db.audit_log
-                    .find({}, {"_id": 0})
+                    .find(query, {"_id": 0})
                     .sort("timestamp", -1)
                     .limit(min(limit, 50))
                 )
@@ -677,17 +690,28 @@ class DatabaseDashboardService:
         activity.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
         return activity[:limit]
 
-    async def get_recent_errors(self, limit: int = 50) -> List[Dict[str, Any]]:
+    async def get_recent_errors(
+        self, limit: int = 50, since: str = None, until: str = None,
+    ) -> List[Dict[str, Any]]:
         """Get recent errors from extraction_log and pipeline_jobs."""
         if limit > 500:
             limit = 500
         errors = []
 
+        def _date_filter(field: str, base_query: Dict) -> Dict:
+            q = dict(base_query)
+            if since:
+                q.setdefault(field, {})["$gte"] = since
+            if until:
+                q.setdefault(field, {})["$lte"] = until
+            return q
+
         # Failed pipeline jobs
         try:
+            query = _date_filter("created_at", {"status": {"$in": ["failed", "error"]}})
             cursor = (
                 self.db.pipeline_jobs
-                .find({"status": {"$in": ["failed", "error"]}}, {"_id": 0})
+                .find(query, {"_id": 0})
                 .sort("created_at", -1)
                 .limit(min(limit, 50))
             )
@@ -709,9 +733,10 @@ class DatabaseDashboardService:
 
         # Failed extractions
         try:
+            query = _date_filter("started_at", {"status": {"$in": ["failed", "error"]}})
             cursor = (
                 self.db.extraction_log
-                .find({"status": {"$in": ["failed", "error"]}}, {"_id": 0})
+                .find(query, {"_id": 0})
                 .sort("started_at", -1)
                 .limit(min(limit, 50))
             )
@@ -737,8 +762,6 @@ class DatabaseDashboardService:
 
     async def get_error_trend(self, days: int = 7) -> List[Dict[str, Any]]:
         """Aggregate error counts per day for the last N days."""
-        from datetime import timedelta
-
         now = datetime.now(timezone.utc)
         start = now - timedelta(days=days)
         start_iso = start.isoformat()
@@ -955,7 +978,7 @@ class DatabaseDashboardService:
             except Exception:
                 pass
 
-        # PostgreSQL pool usage
+        # PostgreSQL pool usage and storage size
         if self.ts_store and self.ts_store._is_initialized:
             try:
                 pool = self.ts_store._pool
@@ -975,6 +998,50 @@ class DatabaseDashboardService:
                         })
             except Exception:
                 pass
+
+            # PostgreSQL total storage size
+            try:
+                async with self.ts_store._pool.acquire() as conn:
+                    size_bytes = await conn.fetchval(
+                        "SELECT pg_database_size(current_database())"
+                    )
+                    size_gb = (size_bytes or 0) / (1024 ** 3)
+                    warn_gb = thresholds.get("pg_size_warn_gb", 10.0)
+                    if size_gb > warn_gb:
+                        alerts.append({
+                            "type": "storage",
+                            "store": "postgresql",
+                            "severity": "warning",
+                            "message": f"PostgreSQL size ({size_gb:.2f} GB) exceeds threshold ({warn_gb} GB)",
+                            "current_value": round(size_gb, 2),
+                            "threshold": warn_gb,
+                        })
+            except Exception:
+                pass
+
+        # Error rate check (errors in the last hour)
+        try:
+            one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+            hour_iso = one_hour_ago.isoformat()
+            error_count = 0
+            error_count += await self.db.pipeline_jobs.count_documents(
+                {"status": {"$in": ["failed", "error"]}, "created_at": {"$gte": hour_iso}}
+            )
+            error_count += await self.db.extraction_log.count_documents(
+                {"status": {"$in": ["failed", "error"]}, "started_at": {"$gte": hour_iso}}
+            )
+            warn_rate = thresholds.get("error_rate_warn_per_hour", 10)
+            if error_count > warn_rate:
+                alerts.append({
+                    "type": "error_rate",
+                    "store": "mongodb",
+                    "severity": "warning",
+                    "message": f"Error rate ({error_count}/hr) exceeds threshold ({warn_rate}/hr)",
+                    "current_value": error_count,
+                    "threshold": warn_rate,
+                })
+        except Exception:
+            pass
 
         return alerts
 

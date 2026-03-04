@@ -33,7 +33,7 @@ import {
   getPgTables, getTableSample, getTableSchema,
   getRedisKeys, getDatabaseActivity, getDatabaseErrors, getErrorTrend,
   getDatabaseSettings, updateDatabaseSettings,
-  getAuditLog, getCacheStats, flushCache,
+  getAuditLog, writeAuditLog, getCacheStats, flushCache,
   getWatchlist, addToWatchlist, updateWatchlistItem, removeFromWatchlist,
   getPortfolio, addToPortfolio, updatePortfolioHolding, removeFromPortfolio,
   getAlerts, createAlert, updateAlert, deleteAlert,
@@ -1138,6 +1138,13 @@ function RedisTab() {
 //  Activity Tab (Activity + Errors + Audit Log)
 // ============================================================
 
+// Compute ISO date string N days ago
+function daysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
 function ActivityTab() {
   const [subTab, setSubTab] = useState("activity");
   const [activity, setActivity] = useState([]);
@@ -1152,18 +1159,29 @@ function ActivityTab() {
   const [activityCollFilter, setActivityCollFilter] = useState("all");
   const [activityStatusFilter, setActivityStatusFilter] = useState("all");
 
+  // Date range preset
+  const [dateRange, setDateRange] = useState("all"); // all | 1 | 7 | 30
+
   // Audit log filters
   const [auditActionFilter, setAuditActionFilter] = useState("");
   const [auditStoreFilter, setAuditStoreFilter] = useState("");
   const [auditCollFilter, setAuditCollFilter] = useState("");
 
-  useEffect(() => {
-    Promise.all([
-      getDatabaseActivity(200).then((r) => setActivity(r.data.activity || [])).catch(() => {}),
-      getDatabaseErrors(100).then((r) => setErrors(r.data.errors || [])).catch(() => {}),
-      getErrorTrend(7).then((r) => setErrorTrend(r.data.trend || [])).catch(() => {}),
-    ]).finally(() => setLoading(false));
-  }, []);
+  const fetchActivityData = useCallback(async () => {
+    setLoading(true);
+    const since = dateRange !== "all" ? daysAgo(parseInt(dateRange)) : null;
+    try {
+      await Promise.all([
+        getDatabaseActivity(200, null, since).then((r) => setActivity(r.data.activity || [])).catch(() => {}),
+        getDatabaseErrors(100, since).then((r) => setErrors(r.data.errors || [])).catch(() => {}),
+        getErrorTrend(dateRange !== "all" ? parseInt(dateRange) : 7).then((r) => setErrorTrend(r.data.trend || [])).catch(() => {}),
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }, [dateRange]);
+
+  useEffect(() => { fetchActivityData(); }, [fetchActivityData]);
 
   const loadAuditLog = useCallback(async (page = 1, filters = {}) => {
     try {
@@ -1237,6 +1255,17 @@ function ActivityTab() {
         <TabsContent value="activity">
           {/* Activity filters */}
           <div className="flex gap-2 mb-3 flex-wrap">
+            <Select value={dateRange} onValueChange={setDateRange}>
+              <SelectTrigger className="w-[130px] h-8 text-xs bg-zinc-800 border-zinc-700">
+                <SelectValue placeholder="Date Range" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Time</SelectItem>
+                <SelectItem value="1">Last 24h</SelectItem>
+                <SelectItem value="7">Last 7 Days</SelectItem>
+                <SelectItem value="30">Last 30 Days</SelectItem>
+              </SelectContent>
+            </Select>
             <Select value={activityCollFilter} onValueChange={setActivityCollFilter}>
               <SelectTrigger className="w-[160px] h-8 text-xs bg-zinc-800 border-zinc-700">
                 <SelectValue placeholder="Collection" />
@@ -1788,11 +1817,18 @@ function CrudSection({ title, fields, fetchFn, addFn, updateFn, deleteFn, idFiel
 
   const getItemId = (item) => item[idField] || (altIdField && item[altIdField]);
 
+  const collectionName = title.toLowerCase();
+
   const handleAdd = async () => {
     setSaving(true);
     try {
       await addFn(addValues);
       toast.success(`${title} item added`);
+      writeAuditLog({
+        action: "create", store: "mongodb", collection_or_table: collectionName,
+        record_id: addValues[idField] || addValues.symbol || "new",
+        new_value: addValues,
+      }).catch(() => {});
       setAddDialog(false);
       setAddValues({});
       fetchData();
@@ -1816,6 +1852,10 @@ function CrudSection({ title, fields, fetchFn, addFn, updateFn, deleteFn, idFiel
       });
       await updateFn(id, updates);
       toast.success("Updated successfully");
+      writeAuditLog({
+        action: "update", store: "mongodb", collection_or_table: collectionName,
+        record_id: String(id), new_value: updates,
+      }).catch(() => {});
       setEditingRow(null);
       setEditValues({});
       fetchData();
@@ -1833,6 +1873,10 @@ function CrudSection({ title, fields, fetchFn, addFn, updateFn, deleteFn, idFiel
       const id = getItemId(deleteDialog);
       await deleteFn(id);
       toast.success("Deleted successfully");
+      writeAuditLog({
+        action: "delete", store: "mongodb", collection_or_table: collectionName,
+        record_id: String(id), previous_value: deleteDialog,
+      }).catch(() => {});
       setDeleteDialog(null);
       fetchData();
     } catch (err) {

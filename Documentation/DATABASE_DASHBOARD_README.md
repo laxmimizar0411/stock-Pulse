@@ -87,12 +87,12 @@ Three sub-tabs:
 - **Safe Mode** — Require confirmation for destructive actions (default: ON)
 - **Auto-Refresh Interval** — 15–300 seconds (default: 30)
 - **Default Page Size** — 10–100 (default: 25)
-- **Alert Thresholds:**
+- **Alert Thresholds** (all actively evaluated):
   - MongoDB data size (GB)
-  - PostgreSQL data size (GB)
+  - PostgreSQL data size (GB) — via `pg_database_size()`
   - Redis memory (MB)
   - Connection pool usage (%)
-  - Error rate per hour
+  - Error rate per hour — counts failed jobs/extractions in the last hour
 
 ## API Endpoints
 
@@ -109,12 +109,13 @@ Three sub-tabs:
 | GET | `/api/database/tables/{name}/sample` | Paginated rows |
 | GET | `/api/database/tables/{name}/schema` | Column/index/FK info |
 | GET | `/api/database/redis/keys` | List Redis keys by prefix |
-| GET | `/api/database/activity` | Recent activity feed |
-| GET | `/api/database/errors` | Recent errors |
+| GET | `/api/database/activity` | Recent activity feed (supports `since`, `until`, `collection` params) |
+| GET | `/api/database/errors` | Recent errors (supports `since`, `until` params) |
 | GET | `/api/database/errors/trend` | Error counts by day |
 | GET | `/api/database/settings` | Dashboard settings |
 | PATCH | `/api/database/settings` | Update settings |
-| GET | `/api/database/audit-log` | Paginated audit log |
+| POST | `/api/database/audit-log` | Write audit log entry |
+| GET | `/api/database/audit-log` | Paginated audit log (supports `action`, `store`, `collection_or_table` filters) |
 
 ## Security
 

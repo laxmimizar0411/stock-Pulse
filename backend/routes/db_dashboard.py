@@ -245,10 +245,12 @@ async def list_redis_keys(prefix: str = Query(default="", max_length=100)):
 async def get_recent_activity(
     limit: int = Query(default=50, ge=1, le=500),
     collection: Optional[str] = Query(default=None, max_length=50),
+    since: Optional[str] = Query(default=None, max_length=30, description="ISO date/datetime lower bound"),
+    until: Optional[str] = Query(default=None, max_length=30, description="ISO date/datetime upper bound"),
 ):
     """Get recent database activity (pipeline jobs, extraction logs, audit entries)."""
     try:
-        return {"activity": await _svc().get_recent_activity(limit, collection)}
+        return {"activity": await _svc().get_recent_activity(limit, collection, since, until)}
     except Exception as e:
         logger.error(f"Activity error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -257,10 +259,12 @@ async def get_recent_activity(
 @router.get("/errors")
 async def get_recent_errors(
     limit: int = Query(default=50, ge=1, le=500),
+    since: Optional[str] = Query(default=None, max_length=30),
+    until: Optional[str] = Query(default=None, max_length=30),
 ):
     """Get recent database errors (failed pipeline jobs, failed extractions)."""
     try:
-        return {"errors": await _svc().get_recent_errors(limit)}
+        return {"errors": await _svc().get_recent_errors(limit, since, until)}
     except Exception as e:
         logger.error(f"Errors fetch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -324,6 +328,34 @@ async def update_dashboard_settings(updates: SettingsUpdate):
 # -------------------------------------------------------------------
 #  Audit Log
 # -------------------------------------------------------------------
+
+class AuditLogEntry(BaseModel):
+    action: str = Field(..., max_length=20)
+    store: str = Field(..., max_length=20)
+    collection_or_table: str = Field(..., max_length=50)
+    record_id: str = Field(..., max_length=200)
+    previous_value: Optional[Any] = None
+    new_value: Optional[Any] = None
+
+
+@router.post("/audit-log")
+async def write_audit_log(entry: AuditLogEntry):
+    """Write an audit log entry (called by frontend after CRUD operations)."""
+    try:
+        await _svc().log_audit(
+            action=entry.action,
+            store=entry.store,
+            collection_or_table=entry.collection_or_table,
+            record_id=entry.record_id,
+            previous_value=entry.previous_value,
+            new_value=entry.new_value,
+            initiator="dashboard",
+        )
+        return {"message": "Audit log entry created"}
+    except Exception as e:
+        logger.error(f"Audit log write error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/audit-log")
 async def get_audit_log(
