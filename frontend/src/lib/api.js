@@ -143,6 +143,8 @@ export const getDatabaseActivity = (limit = 50, collection = null) =>
   API.get("/database/activity", { params: { limit, collection } });
 export const getDatabaseErrors = (limit = 50) =>
   API.get("/database/errors", { params: { limit } });
+export const getErrorTrend = (days = 7) =>
+  API.get("/database/errors/trend", { params: { days } });
 
 // Database Dashboard - Settings
 export const getDatabaseSettings = () => API.get("/database/settings");

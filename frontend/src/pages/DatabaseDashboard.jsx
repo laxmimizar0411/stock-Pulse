@@ -4,6 +4,7 @@ import {
   AlertTriangle, CheckCircle2, XCircle, Shield, ShieldOff, Trash2,
   Activity, Eye, Settings, FileText, ArrowUpDown, ChevronDown,
   BarChart3, Layers, Clock, Zap, Info, ExternalLink, Filter, X,
+  Plus, Edit3, Save, List, Briefcase, Bell,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -24,14 +25,39 @@ import { Label } from "../components/ui/label";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Separator } from "../components/ui/separator";
 import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line,
+} from "recharts";
+import {
   getDatabaseOverview, getDatabaseHealth, getDataFlow, getThresholdAlerts,
   getMongoCollections, getCollectionSample, getCollectionSchema, deleteCollectionDocument,
   getPgTables, getTableSample, getTableSchema,
-  getRedisKeys, getDatabaseActivity, getDatabaseErrors,
+  getRedisKeys, getDatabaseActivity, getDatabaseErrors, getErrorTrend,
   getDatabaseSettings, updateDatabaseSettings,
   getAuditLog, getCacheStats, flushCache,
+  getWatchlist, addToWatchlist, updateWatchlistItem, removeFromWatchlist,
+  getPortfolio, addToPortfolio, updatePortfolioHolding, removeFromPortfolio,
+  getAlerts, createAlert, updateAlert, deleteAlert,
 } from "../lib/api";
 import { toast } from "sonner";
+
+// ============================================================
+//  Constants
+// ============================================================
+
+const DELETABLE_COLLECTIONS_SET = new Set([
+  "watchlist", "portfolio", "alerts", "news_articles",
+  "backtest_results", "extraction_log", "pipeline_jobs", "quality_reports",
+]);
+
+const ID_FIELD_PRIORITY = ["symbol", "alert_id", "id", "article_id", "backtest_id", "job_id"];
+
+function deriveIdField(doc) {
+  for (const field of ID_FIELD_PRIORITY) {
+    if (doc[field] != null) return field;
+  }
+  const keys = Object.keys(doc);
+  return keys.length > 0 ? keys[0] : null;
+}
 
 // ============================================================
 //  Helper components
@@ -232,8 +258,9 @@ export default function DatabaseDashboard() {
 
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="bg-zinc-800/80 border border-zinc-700/50">
+        <TabsList className="bg-zinc-800/80 border border-zinc-700/50 flex-wrap">
           <TabsTrigger value="overview"><Layers className="h-3.5 w-3.5 mr-1" />Overview</TabsTrigger>
+          <TabsTrigger value="data-mgmt"><Edit3 className="h-3.5 w-3.5 mr-1" />Data Management</TabsTrigger>
           <TabsTrigger value="mongodb"><Database className="h-3.5 w-3.5 mr-1" />MongoDB</TabsTrigger>
           <TabsTrigger value="postgresql"><HardDrive className="h-3.5 w-3.5 mr-1" />PostgreSQL</TabsTrigger>
           <TabsTrigger value="redis"><Zap className="h-3.5 w-3.5 mr-1" />Redis</TabsTrigger>
@@ -243,6 +270,9 @@ export default function DatabaseDashboard() {
 
         <TabsContent value="overview">
           <OverviewTab overview={overview} health={health} />
+        </TabsContent>
+        <TabsContent value="data-mgmt">
+          <DataManagementTab safeMode={settings?.safe_mode} />
         </TabsContent>
         <TabsContent value="mongodb">
           <MongoDBTab safeMode={settings?.safe_mode} />
@@ -398,6 +428,19 @@ function OverviewTab({ overview, health }) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Storage Usage Chart */}
+      <Card className="bg-zinc-900/50 border-zinc-800">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-cyan-400" />
+            Storage Usage
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <StorageChart mongodb={mongo} postgresql={pg} />
+        </CardContent>
+      </Card>
 
       {/* Data Flow */}
       <Card className="bg-zinc-900/50 border-zinc-800">
@@ -646,23 +689,28 @@ function MongoDBTab({ safeMode }) {
                           <pre className="text-zinc-300 whitespace-pre-wrap break-all max-h-40 overflow-auto">
                             {JSON.stringify(doc, null, 2)}
                           </pre>
-                          {/* Delete button */}
-                          {(doc.symbol || doc.id || doc.job_id) && (
-                            <button
-                              onClick={() =>
-                                setDeleteDialog({
-                                  collection: selected,
-                                  idField: doc.symbol ? "symbol" : doc.id ? "id" : "job_id",
-                                  idValue: doc.symbol || doc.id || doc.job_id,
-                                  preview: JSON.stringify(doc, null, 2).substring(0, 200),
-                                })
-                              }
-                              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30"
-                              title="Delete document"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
+                          {/* Delete button - show for all docs in deletable collections */}
+                          {DELETABLE_COLLECTIONS_SET.has(selected) && (() => {
+                            const idField = deriveIdField(doc);
+                            const idValue = idField ? doc[idField] : null;
+                            if (!idField || !idValue) return null;
+                            return (
+                              <button
+                                onClick={() =>
+                                  setDeleteDialog({
+                                    collection: selected,
+                                    idField,
+                                    idValue: String(idValue),
+                                    preview: JSON.stringify(doc, null, 2).substring(0, 200),
+                                  })
+                                }
+                                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                                title="Delete document"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>
@@ -1094,21 +1142,32 @@ function ActivityTab() {
   const [subTab, setSubTab] = useState("activity");
   const [activity, setActivity] = useState([]);
   const [errors, setErrors] = useState([]);
+  const [errorTrend, setErrorTrend] = useState([]);
   const [auditLog, setAuditLog] = useState(null);
   const [auditPage, setAuditPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
 
+  // Activity filters
+  const [activityCollFilter, setActivityCollFilter] = useState("all");
+  const [activityStatusFilter, setActivityStatusFilter] = useState("all");
+
+  // Audit log filters
+  const [auditActionFilter, setAuditActionFilter] = useState("");
+  const [auditStoreFilter, setAuditStoreFilter] = useState("");
+  const [auditCollFilter, setAuditCollFilter] = useState("");
+
   useEffect(() => {
     Promise.all([
-      getDatabaseActivity(100).then((r) => setActivity(r.data.activity || [])).catch(() => {}),
-      getDatabaseErrors(50).then((r) => setErrors(r.data.errors || [])).catch(() => {}),
+      getDatabaseActivity(200).then((r) => setActivity(r.data.activity || [])).catch(() => {}),
+      getDatabaseErrors(100).then((r) => setErrors(r.data.errors || [])).catch(() => {}),
+      getErrorTrend(7).then((r) => setErrorTrend(r.data.trend || [])).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, []);
 
-  const loadAuditLog = useCallback(async (page = 1) => {
+  const loadAuditLog = useCallback(async (page = 1, filters = {}) => {
     try {
-      const r = await getAuditLog(page, 50);
+      const r = await getAuditLog(page, 50, filters);
       setAuditLog(r.data);
       setAuditPage(page);
     } catch {
@@ -1117,8 +1176,14 @@ function ActivityTab() {
   }, []);
 
   useEffect(() => {
-    if (subTab === "audit" && !auditLog) loadAuditLog(1);
-  }, [subTab, auditLog, loadAuditLog]);
+    if (subTab === "audit") {
+      const filters = {};
+      if (auditActionFilter) filters.action = auditActionFilter;
+      if (auditStoreFilter) filters.store = auditStoreFilter;
+      if (auditCollFilter) filters.collection_or_table = auditCollFilter;
+      loadAuditLog(1, filters);
+    }
+  }, [subTab, auditActionFilter, auditStoreFilter, auditCollFilter, loadAuditLog]);
 
   if (loading) return <SectionLoading />;
 
@@ -1130,17 +1195,24 @@ function ActivityTab() {
     return "text-zinc-400";
   };
 
-  const filteredActivity = activity.filter((a) =>
-    a.summary?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredActivity = activity.filter((a) => {
+    if (searchTerm && !a.summary?.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    if (activityCollFilter !== "all" && a.collection !== activityCollFilter) return false;
+    if (activityStatusFilter !== "all") {
+      if (activityStatusFilter === "success" && !["success", "completed"].includes(a.status)) return false;
+      if (activityStatusFilter === "failed" && !["failed", "error"].includes(a.status)) return false;
+      if (activityStatusFilter === "running" && !["running", "pending"].includes(a.status)) return false;
+    }
+    return true;
+  });
   const filteredErrors = errors.filter((e) =>
-    e.message?.toLowerCase().includes(searchTerm.toLowerCase())
+    !searchTerm || e.message?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
     <div className="mt-4 space-y-4">
       <Tabs value={subTab} onValueChange={setSubTab}>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <TabsList className="bg-zinc-800/80 border border-zinc-700/50">
             <TabsTrigger value="activity">
               <Activity className="h-3.5 w-3.5 mr-1" />Activity
@@ -1163,6 +1235,31 @@ function ActivityTab() {
         </div>
 
         <TabsContent value="activity">
+          {/* Activity filters */}
+          <div className="flex gap-2 mb-3 flex-wrap">
+            <Select value={activityCollFilter} onValueChange={setActivityCollFilter}>
+              <SelectTrigger className="w-[160px] h-8 text-xs bg-zinc-800 border-zinc-700">
+                <SelectValue placeholder="Collection" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Collections</SelectItem>
+                <SelectItem value="pipeline_jobs">Pipeline Jobs</SelectItem>
+                <SelectItem value="extraction_log">Extraction Log</SelectItem>
+                <SelectItem value="audit_log">Audit Log</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={activityStatusFilter} onValueChange={setActivityStatusFilter}>
+              <SelectTrigger className="w-[140px] h-8 text-xs bg-zinc-800 border-zinc-700">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="success">Success</SelectItem>
+                <SelectItem value="failed">Failed</SelectItem>
+                <SelectItem value="running">Running</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <Card className="bg-zinc-900/50 border-zinc-800">
             <CardContent className="pt-4">
               {filteredActivity.length === 0 ? (
@@ -1198,6 +1295,28 @@ function ActivityTab() {
         </TabsContent>
 
         <TabsContent value="errors">
+          {/* Error trend chart */}
+          {errorTrend.length > 0 && (
+            <Card className="bg-zinc-900/50 border-zinc-800 mb-3">
+              <CardHeader className="pb-1">
+                <CardTitle className="text-xs text-zinc-400">Error Trend (Last 7 Days)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={150}>
+                  <BarChart data={errorTrend}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#27272A" />
+                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#71717A" }} tickFormatter={(v) => v.slice(5)} />
+                    <YAxis tick={{ fontSize: 10, fill: "#71717A" }} allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={{ background: "#18181B", border: "1px solid #27272A", borderRadius: 8, fontSize: 12 }}
+                      labelStyle={{ color: "#A1A1AA" }}
+                    />
+                    <Bar dataKey="errors" fill="#EF4444" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
           <Card className="bg-zinc-900/50 border-zinc-800">
             <CardContent className="pt-4">
               {filteredErrors.length === 0 ? (
@@ -1234,6 +1353,37 @@ function ActivityTab() {
         </TabsContent>
 
         <TabsContent value="audit">
+          {/* Audit log filters */}
+          <div className="flex gap-2 mb-3 flex-wrap">
+            <Select value={auditActionFilter || "all"} onValueChange={(v) => setAuditActionFilter(v === "all" ? "" : v)}>
+              <SelectTrigger className="w-[130px] h-8 text-xs bg-zinc-800 border-zinc-700">
+                <SelectValue placeholder="Action" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Actions</SelectItem>
+                <SelectItem value="create">Create</SelectItem>
+                <SelectItem value="update">Update</SelectItem>
+                <SelectItem value="delete">Delete</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={auditStoreFilter || "all"} onValueChange={(v) => setAuditStoreFilter(v === "all" ? "" : v)}>
+              <SelectTrigger className="w-[130px] h-8 text-xs bg-zinc-800 border-zinc-700">
+                <SelectValue placeholder="Store" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Stores</SelectItem>
+                <SelectItem value="mongodb">MongoDB</SelectItem>
+                <SelectItem value="postgresql">PostgreSQL</SelectItem>
+                <SelectItem value="redis">Redis</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              placeholder="Collection/Table..."
+              value={auditCollFilter}
+              onChange={(e) => setAuditCollFilter(e.target.value)}
+              className="h-8 text-xs bg-zinc-800 border-zinc-700 max-w-[180px]"
+            />
+          </div>
           <Card className="bg-zinc-900/50 border-zinc-800">
             <CardContent className="pt-4">
               {!auditLog ? (
@@ -1282,7 +1432,13 @@ function ActivityTab() {
                   <Pagination
                     page={auditLog.page}
                     totalPages={auditLog.total_pages}
-                    onPageChange={(p) => loadAuditLog(p)}
+                    onPageChange={(p) => {
+                      const filters = {};
+                      if (auditActionFilter) filters.action = auditActionFilter;
+                      if (auditStoreFilter) filters.store = auditStoreFilter;
+                      if (auditCollFilter) filters.collection_or_table = auditCollFilter;
+                      loadAuditLog(p, filters);
+                    }}
                   />
                 </>
               )}
@@ -1456,6 +1612,400 @@ function ThresholdRow({ label, value, onChange }) {
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
         className="w-24 h-7 text-xs bg-zinc-800 border-zinc-700 text-center"
       />
+    </div>
+  );
+}
+
+// ============================================================
+//  Storage Chart (for Overview)
+// ============================================================
+
+function StorageChart({ mongodb, postgresql }) {
+  const chartData = [];
+
+  // MongoDB collections
+  if (mongodb?.collections) {
+    Object.entries(mongodb.collections).forEach(([name, info]) => {
+      chartData.push({ name, documents: info.documents || 0, type: "MongoDB" });
+    });
+  }
+
+  // PostgreSQL tables
+  if (postgresql?.tables) {
+    Object.entries(postgresql.tables).forEach(([name, info]) => {
+      chartData.push({ name, documents: info.rows || 0, type: "PostgreSQL" });
+    });
+  }
+
+  if (chartData.length === 0) {
+    return <p className="text-xs text-zinc-500 text-center py-4">No storage data available</p>;
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#27272A" />
+        <XAxis
+          dataKey="name"
+          tick={{ fontSize: 9, fill: "#71717A" }}
+          angle={-30}
+          textAnchor="end"
+          height={60}
+        />
+        <YAxis tick={{ fontSize: 10, fill: "#71717A" }} />
+        <Tooltip
+          contentStyle={{ background: "#18181B", border: "1px solid #27272A", borderRadius: 8, fontSize: 12 }}
+          labelStyle={{ color: "#A1A1AA" }}
+          formatter={(value, name) => [value.toLocaleString(), "Documents/Rows"]}
+        />
+        <Bar dataKey="documents" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ============================================================
+//  Data Management Tab (CRUD for Watchlist, Portfolio, Alerts)
+// ============================================================
+
+const WATCHLIST_FIELDS = [
+  { key: "symbol", label: "Symbol", editable: false, required: true },
+  { key: "name", label: "Name", editable: true },
+  { key: "target_price", label: "Target Price", editable: true, type: "number" },
+  { key: "stop_loss", label: "Stop Loss", editable: true, type: "number" },
+  { key: "notes", label: "Notes", editable: true },
+];
+
+const PORTFOLIO_FIELDS = [
+  { key: "symbol", label: "Symbol", editable: false, required: true },
+  { key: "name", label: "Name", editable: true },
+  { key: "quantity", label: "Quantity", editable: true, type: "number" },
+  { key: "avg_buy_price", label: "Avg Buy Price", editable: true, type: "number" },
+  { key: "buy_date", label: "Buy Date", editable: true },
+  { key: "sector", label: "Sector", editable: true },
+];
+
+const ALERT_FIELDS = [
+  { key: "symbol", label: "Symbol", editable: false, required: true },
+  { key: "alert_type", label: "Type", editable: true },
+  { key: "condition", label: "Condition", editable: true },
+  { key: "threshold", label: "Threshold", editable: true, type: "number" },
+  { key: "status", label: "Status", editable: true },
+  { key: "message", label: "Message", editable: true },
+];
+
+function DataManagementTab({ safeMode }) {
+  const [section, setSection] = useState("watchlist");
+
+  return (
+    <div className="mt-4 space-y-4">
+      <Tabs value={section} onValueChange={setSection}>
+        <TabsList className="bg-zinc-800/80 border border-zinc-700/50">
+          <TabsTrigger value="watchlist">
+            <List className="h-3.5 w-3.5 mr-1" />Watchlist
+          </TabsTrigger>
+          <TabsTrigger value="portfolio">
+            <Briefcase className="h-3.5 w-3.5 mr-1" />Portfolio
+          </TabsTrigger>
+          <TabsTrigger value="alerts">
+            <Bell className="h-3.5 w-3.5 mr-1" />Alerts
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="watchlist">
+          <CrudSection
+            title="Watchlist"
+            fields={WATCHLIST_FIELDS}
+            fetchFn={getWatchlist}
+            addFn={addToWatchlist}
+            updateFn={(symbol, updates) => updateWatchlistItem(symbol, updates)}
+            deleteFn={(symbol) => removeFromWatchlist(symbol)}
+            idField="symbol"
+            safeMode={safeMode}
+            dataExtractor={(res) => res.data.watchlist || res.data || []}
+          />
+        </TabsContent>
+        <TabsContent value="portfolio">
+          <CrudSection
+            title="Portfolio"
+            fields={PORTFOLIO_FIELDS}
+            fetchFn={getPortfolio}
+            addFn={addToPortfolio}
+            updateFn={(symbol, updates) => updatePortfolioHolding(symbol, updates)}
+            deleteFn={(symbol) => removeFromPortfolio(symbol)}
+            idField="symbol"
+            safeMode={safeMode}
+            dataExtractor={(res) => res.data.portfolio || res.data.holdings || res.data || []}
+          />
+        </TabsContent>
+        <TabsContent value="alerts">
+          <CrudSection
+            title="Alerts"
+            fields={ALERT_FIELDS}
+            fetchFn={() => getAlerts()}
+            addFn={createAlert}
+            updateFn={(id, updates) => updateAlert(id, updates)}
+            deleteFn={(id) => deleteAlert(id)}
+            idField="alert_id"
+            altIdField="id"
+            safeMode={safeMode}
+            dataExtractor={(res) => res.data.alerts || res.data || []}
+          />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// ============================================================
+//  CRUD Section (reusable for Watchlist, Portfolio, Alerts)
+// ============================================================
+
+function CrudSection({ title, fields, fetchFn, addFn, updateFn, deleteFn, idField, altIdField, safeMode, dataExtractor }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editingRow, setEditingRow] = useState(null); // index of row being edited
+  const [editValues, setEditValues] = useState({});
+  const [addDialog, setAddDialog] = useState(false);
+  const [addValues, setAddValues] = useState({});
+  const [deleteDialog, setDeleteDialog] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await fetchFn();
+      const data = dataExtractor(res);
+      setItems(Array.isArray(data) ? data : []);
+    } catch {
+      toast.error(`Failed to load ${title}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchFn, dataExtractor, title]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const getItemId = (item) => item[idField] || (altIdField && item[altIdField]);
+
+  const handleAdd = async () => {
+    setSaving(true);
+    try {
+      await addFn(addValues);
+      toast.success(`${title} item added`);
+      setAddDialog(false);
+      setAddValues({});
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || `Failed to add to ${title}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveEdit = async (item, idx) => {
+    setSaving(true);
+    try {
+      const id = getItemId(item);
+      const updates = { ...editValues };
+      // Convert numeric fields
+      fields.forEach((f) => {
+        if (f.type === "number" && updates[f.key] !== undefined) {
+          updates[f.key] = Number(updates[f.key]);
+        }
+      });
+      await updateFn(id, updates);
+      toast.success("Updated successfully");
+      setEditingRow(null);
+      setEditValues({});
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Update failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteDialog) return;
+    setSaving(true);
+    try {
+      const id = getItemId(deleteDialog);
+      await deleteFn(id);
+      toast.success("Deleted successfully");
+      setDeleteDialog(null);
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Delete failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEdit = (idx, item) => {
+    setEditingRow(idx);
+    const vals = {};
+    fields.filter((f) => f.editable).forEach((f) => {
+      vals[f.key] = item[f.key] ?? "";
+    });
+    setEditValues(vals);
+  };
+
+  const filteredItems = items.filter((item) => {
+    if (!searchTerm) return true;
+    const term = searchTerm.toLowerCase();
+    return fields.some((f) => String(item[f.key] ?? "").toLowerCase().includes(term));
+  });
+
+  if (loading) return <SectionLoading />;
+
+  return (
+    <div className="space-y-3">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between gap-2">
+        <Input
+          placeholder={`Search ${title}...`}
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="h-8 text-xs bg-zinc-800 border-zinc-700 max-w-[250px]"
+        />
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={fetchData}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1" />Refresh
+          </Button>
+          <Button size="sm" onClick={() => setAddDialog(true)}>
+            <Plus className="h-3.5 w-3.5 mr-1" />Add
+          </Button>
+        </div>
+      </div>
+
+      {/* Items table */}
+      <Card className="bg-zinc-900/50 border-zinc-800">
+        <CardContent className="pt-4">
+          {filteredItems.length === 0 ? (
+            <div className="flex flex-col items-center py-8 text-zinc-500">
+              <Database className="h-6 w-6 mb-2" />
+              <p className="text-sm">No {title.toLowerCase()} items found</p>
+            </div>
+          ) : (
+            <ScrollArea className="max-h-[600px]">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {fields.map((f) => (
+                      <TableHead key={f.key} className="text-xs whitespace-nowrap">{f.label}</TableHead>
+                    ))}
+                    <TableHead className="text-xs w-[100px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredItems.map((item, idx) => (
+                    <TableRow key={getItemId(item) || idx}>
+                      {fields.map((f) => (
+                        <TableCell key={f.key} className="text-xs py-1.5">
+                          {editingRow === idx && f.editable ? (
+                            <Input
+                              type={f.type || "text"}
+                              value={editValues[f.key] ?? ""}
+                              onChange={(e) => setEditValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                              className="h-7 text-xs bg-zinc-800 border-zinc-600 w-full min-w-[80px]"
+                            />
+                          ) : (
+                            <span className="font-mono text-zinc-300">
+                              {item[f.key] != null ? String(item[f.key]).substring(0, 50) : <span className="text-zinc-600">-</span>}
+                            </span>
+                          )}
+                        </TableCell>
+                      ))}
+                      <TableCell className="text-xs py-1.5">
+                        <div className="flex gap-1">
+                          {editingRow === idx ? (
+                            <>
+                              <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => handleSaveEdit(item, idx)} disabled={saving}>
+                                <Save className="h-3.5 w-3.5 text-emerald-400" />
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => { setEditingRow(null); setEditValues({}); }}>
+                                <X className="h-3.5 w-3.5 text-zinc-400" />
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => startEdit(idx, item)}>
+                                <Edit3 className="h-3.5 w-3.5 text-blue-400" />
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setDeleteDialog(item)}>
+                                <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </ScrollArea>
+          )}
+          <div className="text-xs text-zinc-500 mt-2">{filteredItems.length} items</div>
+        </CardContent>
+      </Card>
+
+      {/* Add dialog */}
+      <Dialog open={addDialog} onOpenChange={setAddDialog}>
+        <DialogContent className="bg-zinc-900 border-zinc-800">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="h-4 w-4 text-blue-400" /> Add to {title}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {fields.map((f) => (
+              <div key={f.key}>
+                <Label className="text-xs text-zinc-400">{f.label}{f.required && " *"}</Label>
+                <Input
+                  type={f.type || "text"}
+                  value={addValues[f.key] ?? ""}
+                  onChange={(e) => setAddValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                  className="h-8 text-xs bg-zinc-800 border-zinc-700 mt-1"
+                  placeholder={f.label}
+                />
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddDialog(false)}>Cancel</Button>
+            <Button onClick={handleAdd} disabled={saving}>
+              {saving ? <RefreshCw className="h-4 w-4 mr-1 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />}
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete dialog */}
+      <Dialog open={!!deleteDialog} onOpenChange={() => setDeleteDialog(null)}>
+        <DialogContent className="bg-zinc-900 border-zinc-800">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-400">
+              <Trash2 className="h-4 w-4" /> Confirm Delete
+            </DialogTitle>
+            <DialogDescription>
+              {safeMode && (
+                <span className="text-yellow-400 text-xs flex items-center gap-1 mb-2">
+                  <Shield className="h-3 w-3" /> Safe Mode is ON
+                </span>
+              )}
+              <span className="block mt-1">
+                Delete <span className="font-mono text-zinc-300">{deleteDialog && getItemId(deleteDialog)}</span> from {title}?
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialog(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={saving}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

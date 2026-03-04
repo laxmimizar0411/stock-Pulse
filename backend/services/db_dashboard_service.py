@@ -124,6 +124,26 @@ DELETABLE_COLLECTIONS = {
     "quality_reports",
 }
 
+# ID field priority for each deletable collection
+COLLECTION_ID_FIELDS = {
+    "watchlist": ["symbol"],
+    "portfolio": ["symbol"],
+    "alerts": ["alert_id", "id"],
+    "news_articles": ["id", "article_id"],
+    "backtest_results": ["id", "backtest_id"],
+    "extraction_log": ["id"],
+    "pipeline_jobs": ["job_id"],
+    "quality_reports": ["symbol"],
+}
+
+# PostgreSQL table ordering for sample queries
+PG_TABLE_ORDER_BY = {
+    "prices_daily": "date DESC, symbol ASC",
+    "technical_indicators": "date DESC, symbol ASC",
+    "fundamentals_quarterly": "period_end DESC, symbol ASC",
+    "shareholding_quarterly": "quarter_end DESC, symbol ASC",
+}
+
 # Default dashboard settings
 DEFAULT_SETTINGS = {
     "safe_mode": True,
@@ -399,10 +419,11 @@ class DatabaseDashboardService:
             return {"table": name, "total": 0, "documents": []}
 
         offset = (page - 1) * page_size
+        order_by = PG_TABLE_ORDER_BY.get(name, "1 DESC")
         async with self.ts_store._pool.acquire() as conn:
             total = await conn.fetchval(f"SELECT COUNT(*) FROM {name}")
             rows = await conn.fetch(
-                f"SELECT * FROM {name} ORDER BY 1 DESC, 2 DESC LIMIT $1 OFFSET $2",
+                f"SELECT * FROM {name} ORDER BY {order_by} LIMIT $1 OFFSET $2",
                 page_size, offset,
             )
             docs = []
@@ -579,14 +600,8 @@ class DatabaseDashboardService:
         activity = []
 
         # Pipeline jobs
-        try:
-            query = {}
-            if collection_filter and collection_filter == "pipeline_jobs":
-                pass  # no extra filter
-            elif collection_filter:
-                query = {"_skip": True}
-
-            if not query.get("_skip"):
+        if not collection_filter or collection_filter == "pipeline_jobs":
+            try:
                 cursor = (
                     self.db.pipeline_jobs
                     .find({}, {"_id": 0})
@@ -607,12 +622,12 @@ class DatabaseDashboardService:
                             "processed": job.get("processed_symbols", 0),
                         },
                     })
-        except Exception as e:
-            logger.warning(f"Failed to fetch pipeline jobs: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch pipeline jobs: {e}")
 
         # Extraction log entries
-        try:
-            if not collection_filter or collection_filter in ("extraction_log", None):
+        if not collection_filter or collection_filter == "extraction_log":
+            try:
                 cursor = (
                     self.db.extraction_log
                     .find({}, {"_id": 0})
@@ -633,12 +648,12 @@ class DatabaseDashboardService:
                             "duration_ms": log.get("duration_ms"),
                         },
                     })
-        except Exception as e:
-            logger.warning(f"Failed to fetch extraction logs: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch extraction logs: {e}")
 
         # Audit log entries
-        try:
-            if not collection_filter or collection_filter in ("audit_log", None):
+        if not collection_filter or collection_filter == "audit_log":
+            try:
                 cursor = (
                     self.db.audit_log
                     .find({}, {"_id": 0})
@@ -655,8 +670,8 @@ class DatabaseDashboardService:
                         "summary": f"{audit.get('action', 'N/A')} on {audit.get('collection_or_table', 'N/A')}: {audit.get('record_id', 'N/A')}",
                         "details": audit,
                     })
-        except Exception as e:
-            pass  # audit_log may not exist yet
+            except Exception as e:
+                logger.warning(f"Failed to write audit log entry: {e}")
 
         # Sort by timestamp descending
         activity.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
@@ -719,6 +734,50 @@ class DatabaseDashboardService:
 
         errors.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
         return errors[:limit]
+
+    async def get_error_trend(self, days: int = 7) -> List[Dict[str, Any]]:
+        """Aggregate error counts per day for the last N days."""
+        from datetime import timedelta
+
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=days)
+        start_iso = start.isoformat()
+
+        # Build daily buckets
+        buckets: Dict[str, int] = {}
+        for i in range(days):
+            day = (start + timedelta(days=i + 1)).strftime("%Y-%m-%d")
+            buckets[day] = 0
+
+        # Count failed pipeline jobs
+        try:
+            cursor = self.db.pipeline_jobs.find(
+                {"status": {"$in": ["failed", "error"]}, "created_at": {"$gte": start_iso}},
+                {"created_at": 1, "_id": 0},
+            )
+            async for doc in cursor:
+                ts = doc.get("created_at", "")
+                day = ts[:10] if len(ts) >= 10 else ""
+                if day in buckets:
+                    buckets[day] += 1
+        except Exception:
+            pass
+
+        # Count failed extractions
+        try:
+            cursor = self.db.extraction_log.find(
+                {"status": {"$in": ["failed", "error"]}, "started_at": {"$gte": start_iso}},
+                {"started_at": 1, "_id": 0},
+            )
+            async for doc in cursor:
+                ts = doc.get("started_at", "")
+                day = ts[:10] if len(ts) >= 10 else ""
+                if day in buckets:
+                    buckets[day] += 1
+        except Exception:
+            pass
+
+        return [{"date": d, "errors": c} for d, c in sorted(buckets.items())]
 
     # ===============================================================
     #  Settings

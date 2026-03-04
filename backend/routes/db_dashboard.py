@@ -266,6 +266,18 @@ async def get_recent_errors(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/errors/trend")
+async def get_error_trend(
+    days: int = Query(default=7, ge=1, le=30),
+):
+    """Get error counts per day for the last N days."""
+    try:
+        return {"trend": await _svc().get_error_trend(days)}
+    except Exception as e:
+        logger.error(f"Error trend error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # -------------------------------------------------------------------
 #  Settings
 # -------------------------------------------------------------------
