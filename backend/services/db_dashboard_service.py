@@ -1105,3 +1105,285 @@ class DatabaseDashboardService:
                 for name, meta in PG_TABLE_META.items()
             },
         }
+
+    # ===============================================================
+    #  Export Data
+    # ===============================================================
+
+    async def export_collection(
+        self, name: str, format: str = "json", limit: int = 5000
+    ) -> Dict[str, Any]:
+        """Export MongoDB collection data as JSON or CSV-ready."""
+        if limit > 10000:
+            limit = 10000
+        cursor = self.db[name].find({}, {"_id": 0}).limit(limit)
+        docs = await cursor.to_list(length=limit)
+
+        if format == "csv":
+            if not docs:
+                return {"format": "csv", "headers": [], "rows": [], "total": 0}
+            headers = list(docs[0].keys())
+            # Union of all keys
+            for doc in docs[1:]:
+                for k in doc.keys():
+                    if k not in headers:
+                        headers.append(k)
+            rows = []
+            for doc in docs:
+                rows.append([str(doc.get(h, "")) for h in headers])
+            return {"format": "csv", "headers": headers, "rows": rows, "total": len(docs)}
+        else:
+            return {"format": "json", "documents": docs, "total": len(docs)}
+
+    async def export_table(
+        self, name: str, format: str = "json", limit: int = 5000
+    ) -> Dict[str, Any]:
+        """Export PostgreSQL table data as JSON or CSV-ready."""
+        allowed = set(PG_TABLE_META.keys())
+        if name not in allowed:
+            raise ValueError(f"Table not allowed: {name}")
+        if not self.ts_store or not self.ts_store._is_initialized:
+            return {"format": format, "headers": [], "rows": [], "total": 0}
+        if limit > 10000:
+            limit = 10000
+
+        order_by = PG_TABLE_ORDER_BY.get(name, "1 DESC")
+        async with self.ts_store._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT * FROM {name} ORDER BY {order_by} LIMIT $1", limit
+            )
+            if not rows:
+                return {"format": format, "headers": [], "rows": [], "total": 0}
+
+            headers = list(rows[0].keys())
+            docs = []
+            for row in rows:
+                doc = {}
+                for key, val in dict(row).items():
+                    if hasattr(val, "isoformat"):
+                        doc[key] = val.isoformat()
+                    elif isinstance(val, (int, float, str, bool, type(None))):
+                        doc[key] = val
+                    else:
+                        doc[key] = str(val)
+                docs.append(doc)
+
+            if format == "csv":
+                csv_rows = [[str(doc.get(h, "")) for h in headers] for doc in docs]
+                return {"format": "csv", "headers": headers, "rows": csv_rows, "total": len(docs)}
+            else:
+                return {"format": "json", "documents": docs, "total": len(docs)}
+
+    # ===============================================================
+    #  Bulk Operations
+    # ===============================================================
+
+    async def bulk_delete(
+        self, collection: str, id_field: str, id_values: List[str]
+    ) -> Dict[str, Any]:
+        """Delete multiple documents from a MongoDB collection."""
+        if collection not in DELETABLE_COLLECTIONS:
+            raise ValueError(f"Deletion not allowed for collection: {collection}")
+        if len(id_values) > 100:
+            raise ValueError("Maximum 100 documents per bulk delete")
+
+        result = await self.db[collection].delete_many(
+            {id_field: {"$in": id_values}}
+        )
+        return {"deleted_count": result.deleted_count, "requested": len(id_values)}
+
+    # ===============================================================
+    #  Query Playground (Read-Only)
+    # ===============================================================
+
+    async def execute_mongo_query(
+        self, collection: str, query: Dict[str, Any], limit: int = 50
+    ) -> Dict[str, Any]:
+        """Execute a read-only MongoDB find query."""
+        if limit > 200:
+            limit = 200
+
+        # Validate collection exists
+        collections = await self.db.list_collection_names()
+        if collection not in collections:
+            raise ValueError(f"Collection '{collection}' not found")
+
+        # Block write operators
+        query_str = str(query).lower()
+        blocked = ["$set", "$unset", "$push", "$pull", "$inc", "$rename",
+                    "$addtoset", "$pop", "$bit", "$currentdate"]
+        for op in blocked:
+            if op in query_str:
+                raise ValueError(f"Write operator '{op}' not allowed in read-only mode")
+
+        try:
+            cursor = self.db[collection].find(query, {"_id": 0}).limit(limit)
+            docs = await cursor.to_list(length=limit)
+            total = await self.db[collection].count_documents(query)
+            return {
+                "collection": collection,
+                "query": query,
+                "documents": docs,
+                "returned": len(docs),
+                "total_matching": total,
+            }
+        except Exception as e:
+            raise ValueError(f"Query error: {str(e)}")
+
+    async def execute_pg_query(self, sql: str, limit: int = 50) -> Dict[str, Any]:
+        """Execute a read-only PostgreSQL query."""
+        if not self.ts_store or not self.ts_store._is_initialized:
+            raise ValueError("PostgreSQL not initialized")
+        if limit > 200:
+            limit = 200
+
+        # Only allow SELECT
+        sql_clean = sql.strip().upper()
+        if not sql_clean.startswith("SELECT"):
+            raise ValueError("Only SELECT queries are allowed")
+
+        # Block dangerous keywords
+        for keyword in ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
+                        "CREATE", "TRUNCATE", "GRANT", "REVOKE", "EXEC"]:
+            if keyword in sql_clean.split("--")[0]:  # ignore comments
+                raise ValueError(f"'{keyword}' not allowed in read-only mode")
+
+        try:
+            async with self.ts_store._pool.acquire() as conn:
+                # Use a read-only transaction
+                async with conn.transaction(readonly=True):
+                    rows = await conn.fetch(f"{sql} LIMIT {limit}")
+                    if not rows:
+                        return {"sql": sql, "columns": [], "rows": [], "returned": 0}
+                    columns = list(rows[0].keys())
+                    result_rows = []
+                    for row in rows:
+                        result_rows.append({
+                            k: (v.isoformat() if hasattr(v, "isoformat")
+                                else v if isinstance(v, (int, float, str, bool, type(None)))
+                                else str(v))
+                            for k, v in dict(row).items()
+                        })
+                    return {
+                        "sql": sql,
+                        "columns": columns,
+                        "rows": result_rows,
+                        "returned": len(result_rows),
+                    }
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Query error: {str(e)}")
+
+    # ===============================================================
+    #  Historical Size Tracking
+    # ===============================================================
+
+    async def record_size_snapshot(self) -> Dict[str, Any]:
+        """Record a daily snapshot of database sizes."""
+        snapshot = {
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "mongodb": {},
+            "postgresql": {},
+            "redis": {},
+        }
+
+        # MongoDB
+        try:
+            stats = await self.db.command("dbStats")
+            snapshot["mongodb"] = {
+                "data_size_mb": round(stats.get("dataSize", 0) / (1024 * 1024), 2),
+                "storage_size_mb": round(stats.get("storageSize", 0) / (1024 * 1024), 2),
+                "index_size_mb": round(stats.get("indexSize", 0) / (1024 * 1024), 2),
+                "total_docs": sum(
+                    [await self.db[c].count_documents({})
+                     for c in await self.db.list_collection_names()]
+                ),
+            }
+        except Exception:
+            pass
+
+        # PostgreSQL
+        if self.ts_store and self.ts_store._is_initialized:
+            try:
+                async with self.ts_store._pool.acquire() as conn:
+                    size_bytes = await conn.fetchval(
+                        "SELECT pg_database_size(current_database())"
+                    )
+                    snapshot["postgresql"]["size_mb"] = round(
+                        (size_bytes or 0) / (1024 * 1024), 2
+                    )
+                    total_rows = await conn.fetchval(
+                        "SELECT SUM(n_live_tup) FROM pg_stat_user_tables"
+                    )
+                    snapshot["postgresql"]["total_rows"] = total_rows or 0
+            except Exception:
+                pass
+
+        # Redis
+        if self.cache and self.cache.is_redis_available:
+            try:
+                info = self.cache._redis.info("memory")
+                snapshot["redis"]["memory_mb"] = round(
+                    info.get("used_memory", 0) / (1024 * 1024), 2
+                )
+                snapshot["redis"]["key_count"] = self.cache._redis.dbsize()
+            except Exception:
+                pass
+
+        # Upsert (one snapshot per day)
+        await self.db.size_snapshots.update_one(
+            {"date": snapshot["date"]},
+            {"$set": snapshot},
+            upsert=True,
+        )
+        return snapshot
+
+    async def get_size_history(self, days: int = 30) -> List[Dict[str, Any]]:
+        """Get historical size snapshots."""
+        if days > 365:
+            days = 365
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+        cursor = (
+            self.db.size_snapshots
+            .find({"date": {"$gte": cutoff}}, {"_id": 0})
+            .sort("date", 1)
+        )
+        return await cursor.to_list(length=days)
+
+    # ===============================================================
+    #  Collection Comparison
+    # ===============================================================
+
+    async def compare_collections(
+        self, col_a: str, col_b: str
+    ) -> Dict[str, Any]:
+        """Compare two MongoDB collections side-by-side."""
+        schema_a = await self.get_collection_schema(col_a)
+        schema_b = await self.get_collection_schema(col_b)
+        count_a = await self.db[col_a].count_documents({})
+        count_b = await self.db[col_b].count_documents({})
+
+        fields_a = set(schema_a.get("fields", {}).keys())
+        fields_b = set(schema_b.get("fields", {}).keys())
+
+        return {
+            "collection_a": {
+                "name": col_a,
+                "documents": count_a,
+                "fields": schema_a.get("fields", {}),
+                "indexes": schema_a.get("indexes", {}),
+                "description": MONGO_COLLECTION_META.get(col_a, {}).get("description", ""),
+            },
+            "collection_b": {
+                "name": col_b,
+                "documents": count_b,
+                "fields": schema_b.get("fields", {}),
+                "indexes": schema_b.get("indexes", {}),
+                "description": MONGO_COLLECTION_META.get(col_b, {}).get("description", ""),
+            },
+            "common_fields": sorted(fields_a & fields_b),
+            "only_in_a": sorted(fields_a - fields_b),
+            "only_in_b": sorted(fields_b - fields_a),
+        }

@@ -7,7 +7,9 @@ goes through the DatabaseDashboardService - no direct DB access from frontend.
 """
 
 import logging
+import os
 import re
+import sys
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -376,4 +378,214 @@ async def get_audit_log(
         )
     except Exception as e:
         logger.error(f"Audit log error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------------------
+#  Export
+# -------------------------------------------------------------------
+
+@router.get("/collections/{name}/export")
+async def export_collection(
+    name: str,
+    format: str = Query(default="json", regex="^(json|csv)$"),
+    limit: int = Query(default=5000, ge=1, le=10000),
+):
+    """Export MongoDB collection data as JSON or CSV."""
+    if not re.match(r"^[a-z_]{1,50}$", name):
+        raise HTTPException(status_code=400, detail="Invalid collection name")
+    try:
+        return await _svc().export_collection(name, format, limit)
+    except Exception as e:
+        logger.error(f"Export collection error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tables/{name}/export")
+async def export_table(
+    name: str,
+    format: str = Query(default="json", regex="^(json|csv)$"),
+    limit: int = Query(default=5000, ge=1, le=10000),
+):
+    """Export PostgreSQL table data as JSON or CSV."""
+    try:
+        return await _svc().export_table(name, format, limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Export table error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------------------
+#  Bulk Operations
+# -------------------------------------------------------------------
+
+class BulkDeleteRequest(BaseModel):
+    id_field: str = Field(default="symbol", max_length=50)
+    id_values: List[str] = Field(..., max_length=100)
+
+
+@router.post("/collections/{name}/bulk-delete")
+async def bulk_delete_documents(name: str, request: BulkDeleteRequest):
+    """Delete multiple documents from a MongoDB collection."""
+    if not re.match(r"^[a-z_]{1,50}$", name):
+        raise HTTPException(status_code=400, detail="Invalid collection name")
+
+    svc = _svc()
+    settings = await svc.get_settings()
+
+    try:
+        result = await svc.bulk_delete(name, request.id_field, request.id_values)
+
+        await svc.log_audit(
+            action="bulk_delete",
+            store="mongodb",
+            collection_or_table=name,
+            record_id=f"{len(request.id_values)} documents",
+            new_value={"id_field": request.id_field, "ids": request.id_values[:10]},
+        )
+
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        logger.error(f"Bulk delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------------------
+#  Query Playground
+# -------------------------------------------------------------------
+
+class MongoQueryRequest(BaseModel):
+    collection: str = Field(..., max_length=50)
+    query: Dict[str, Any] = Field(default_factory=dict)
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class PgQueryRequest(BaseModel):
+    sql: str = Field(..., max_length=2000)
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+@router.post("/query/mongodb")
+async def execute_mongo_query(request: MongoQueryRequest):
+    """Execute a read-only MongoDB find query."""
+    try:
+        return await _svc().execute_mongo_query(
+            request.collection, request.query, request.limit
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Mongo query error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/query/postgresql")
+async def execute_pg_query(request: PgQueryRequest):
+    """Execute a read-only PostgreSQL SELECT query."""
+    try:
+        return await _svc().execute_pg_query(request.sql, request.limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"PG query error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------------------
+#  Database Backup Trigger
+# -------------------------------------------------------------------
+
+@router.post("/backup")
+async def trigger_backup():
+    """Trigger a MongoDB backup using the backup script."""
+    import asyncio
+
+    script_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "scripts", "backup_mongodb.py",
+    )
+
+    if not os.path.exists(script_path):
+        raise HTTPException(status_code=404, detail="Backup script not found")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, script_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+
+        output = stdout.decode("utf-8", errors="replace")
+        error_output = stderr.decode("utf-8", errors="replace")
+        success = proc.returncode == 0
+
+        await _svc().log_audit(
+            action="backup",
+            store="mongodb",
+            collection_or_table="all",
+            record_id="manual_trigger",
+            new_value={"success": success, "output_lines": output.count("\n")},
+        )
+
+        return {
+            "success": success,
+            "return_code": proc.returncode,
+            "output": output[-2000:],  # last 2000 chars
+            "errors": error_output[-1000:] if error_output else None,
+        }
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Backup timed out (120s)")
+    except Exception as e:
+        logger.error(f"Backup trigger error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------------------
+#  Historical Size Tracking
+# -------------------------------------------------------------------
+
+@router.post("/size-snapshot")
+async def record_size_snapshot():
+    """Record a database size snapshot (called daily or manually)."""
+    try:
+        return await _svc().record_size_snapshot()
+    except Exception as e:
+        logger.error(f"Size snapshot error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/size-history")
+async def get_size_history(
+    days: int = Query(default=30, ge=1, le=365),
+):
+    """Get historical database size snapshots."""
+    try:
+        return {"history": await _svc().get_size_history(days)}
+    except Exception as e:
+        logger.error(f"Size history error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------------------
+#  Collection Comparison
+# -------------------------------------------------------------------
+
+@router.get("/compare")
+async def compare_collections(
+    a: str = Query(..., max_length=50),
+    b: str = Query(..., max_length=50),
+):
+    """Compare two MongoDB collections side-by-side."""
+    for name in [a, b]:
+        if not re.match(r"^[a-z_]{1,50}$", name):
+            raise HTTPException(status_code=400, detail=f"Invalid name: {name}")
+    try:
+        return await _svc().compare_collections(a, b)
+    except Exception as e:
+        logger.error(f"Comparison error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

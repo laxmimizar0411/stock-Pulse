@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Database, Server, HardDrive, RefreshCw, ChevronRight, Search,
   AlertTriangle, CheckCircle2, XCircle, Shield, ShieldOff, Trash2,
   Activity, Eye, Settings, FileText, ArrowUpDown, ChevronDown,
   BarChart3, Layers, Clock, Zap, Info, ExternalLink, Filter, X,
-  Plus, Edit3, Save, List, Briefcase, Bell,
+  Plus, Edit3, Save, List, Briefcase, Bell, Download, Play,
+  HelpCircle, Terminal, GitCompare, Sun, Moon, Archive,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -37,6 +38,9 @@ import {
   getWatchlist, addToWatchlist, updateWatchlistItem, removeFromWatchlist,
   getPortfolio, addToPortfolio, updatePortfolioHolding, removeFromPortfolio,
   getAlerts, createAlert, updateAlert, deleteAlert,
+  exportCollection, exportTable,
+  executeMongoQuery, executePgQuery, triggerBackup,
+  recordSizeSnapshot, getSizeHistory, compareCollections,
 } from "../lib/api";
 import { toast } from "sonner";
 
@@ -138,6 +142,41 @@ export default function DatabaseDashboard() {
   const [settings, setSettings] = useState(null);
   const [thresholdAlerts, setThresholdAlerts] = useState([]);
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(true);
+  const [wsStatus, setWsStatus] = useState("disconnected");
+  const [wsPulse, setWsPulse] = useState(null);
+  const wsRef = useRef(null);
+
+  // WebSocket connection for real-time dashboard updates
+  useEffect(() => {
+    const backendUrl = process.env.REACT_APP_BACKEND_URL || "http://localhost:8000";
+    const wsUrl = backendUrl.replace(/^http/, "ws") + "/ws/dashboard";
+    let ws;
+    let reconnectTimer;
+
+    function connect() {
+      try {
+        ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+        ws.onopen = () => setWsStatus("connected");
+        ws.onmessage = (e) => {
+          try { setWsPulse(JSON.parse(e.data)); } catch {}
+        };
+        ws.onclose = () => {
+          setWsStatus("disconnected");
+          reconnectTimer = setTimeout(connect, 5000);
+        };
+        ws.onerror = () => setWsStatus("error");
+      } catch { setWsStatus("error"); }
+    }
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+    };
+  }, []);
 
   // Fetch core data
   const fetchCoreData = useCallback(async (showToast = false) => {
@@ -178,25 +217,40 @@ export default function DatabaseDashboard() {
   const pg = overview?.postgresql || {};
   const redis = overview?.redis || {};
 
+  const themeClass = darkMode ? "" : "db-dashboard-light";
+
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${themeClass}`}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold font-heading tracking-tight flex items-center gap-2">
             <Database className="h-6 w-6 text-blue-500" />
             Database Dashboard
+            {/* WS status indicator */}
+            <span className={`inline-block h-2 w-2 rounded-full ${
+              wsStatus === "connected" ? "bg-emerald-400" : wsStatus === "error" ? "bg-red-400" : "bg-zinc-500"
+            }`} title={`WebSocket: ${wsStatus}`} />
           </h1>
           <p className="text-sm text-zinc-400 mt-1">
             Complete database visibility, monitoring, and management
+            {wsPulse?.recent_errors_5m > 0 && (
+              <span className="text-red-400 ml-2">({wsPulse.recent_errors_5m} errors in 5m)</span>
+            )}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {lastRefresh && (
             <span className="text-xs text-zinc-500">
               Updated {lastRefresh.toLocaleTimeString()}
             </span>
           )}
+          <Button size="sm" variant="ghost" onClick={() => setHelpOpen(true)} title="Help">
+            <HelpCircle className="h-4 w-4" />
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setDarkMode(!darkMode)} title="Toggle theme">
+            {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -265,6 +319,8 @@ export default function DatabaseDashboard() {
           <TabsTrigger value="postgresql"><HardDrive className="h-3.5 w-3.5 mr-1" />PostgreSQL</TabsTrigger>
           <TabsTrigger value="redis"><Zap className="h-3.5 w-3.5 mr-1" />Redis</TabsTrigger>
           <TabsTrigger value="activity"><Activity className="h-3.5 w-3.5 mr-1" />Activity</TabsTrigger>
+          <TabsTrigger value="query"><Terminal className="h-3.5 w-3.5 mr-1" />Query</TabsTrigger>
+          <TabsTrigger value="tools"><Archive className="h-3.5 w-3.5 mr-1" />Tools</TabsTrigger>
           <TabsTrigger value="settings"><Settings className="h-3.5 w-3.5 mr-1" />Settings</TabsTrigger>
         </TabsList>
 
@@ -286,10 +342,19 @@ export default function DatabaseDashboard() {
         <TabsContent value="activity">
           <ActivityTab />
         </TabsContent>
+        <TabsContent value="query">
+          <QueryPlaygroundTab />
+        </TabsContent>
+        <TabsContent value="tools">
+          <ToolsTab />
+        </TabsContent>
         <TabsContent value="settings">
           <SettingsTab settings={settings} onUpdate={setSettings} />
         </TabsContent>
       </Tabs>
+
+      {/* Help Panel Dialog */}
+      <HelpPanel open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }
@@ -2050,6 +2115,647 @@ function CrudSection({ title, fields, fetchFn, addFn, updateFn, deleteFn, idFiel
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ============================================================
+//  Query Playground Tab
+// ============================================================
+
+function QueryPlaygroundTab() {
+  const [queryType, setQueryType] = useState("mongodb");
+  // MongoDB
+  const [mongoCollection, setMongoCollection] = useState("");
+  const [mongoQuery, setMongoQuery] = useState("{}");
+  const [mongoLimit, setMongoLimit] = useState(50);
+  // PostgreSQL
+  const [pgSql, setPgSql] = useState("SELECT * FROM prices_daily LIMIT 10");
+  const [pgLimit, setPgLimit] = useState(50);
+  // Results
+  const [results, setResults] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState(null);
+  const [collections, setCollections] = useState([]);
+
+  useEffect(() => {
+    getMongoCollections()
+      .then((r) => setCollections(r.data.collections || []))
+      .catch(() => {});
+  }, []);
+
+  const runQuery = async () => {
+    setRunning(true);
+    setError(null);
+    setResults(null);
+    try {
+      if (queryType === "mongodb") {
+        let parsed;
+        try {
+          parsed = JSON.parse(mongoQuery);
+        } catch {
+          setError("Invalid JSON query");
+          setRunning(false);
+          return;
+        }
+        const r = await executeMongoQuery(mongoCollection, parsed, mongoLimit);
+        setResults(r.data);
+      } else {
+        const r = await executePgQuery(pgSql, pgLimit);
+        setResults(r.data);
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || "Query execution failed");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 space-y-4">
+      <Card className="bg-zinc-900/50 border-zinc-800">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Terminal className="h-4 w-4 text-purple-400" />
+            Query Playground
+            <Badge variant="outline" className="text-[10px] border-yellow-500/30 text-yellow-400">Read-Only</Badge>
+          </CardTitle>
+          <p className="text-xs text-zinc-500">Execute read-only queries against your databases</p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Database selector */}
+          <Tabs value={queryType} onValueChange={setQueryType}>
+            <TabsList className="bg-zinc-800/80 border border-zinc-700/50">
+              <TabsTrigger value="mongodb"><Database className="h-3.5 w-3.5 mr-1" />MongoDB</TabsTrigger>
+              <TabsTrigger value="postgresql"><HardDrive className="h-3.5 w-3.5 mr-1" />PostgreSQL</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="mongodb" className="space-y-3 mt-3">
+              <div className="flex gap-2">
+                <Select value={mongoCollection} onValueChange={setMongoCollection}>
+                  <SelectTrigger className="w-[200px] h-8 text-xs bg-zinc-800 border-zinc-700">
+                    <SelectValue placeholder="Select collection" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {collections.map((c) => (
+                      <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={mongoLimit}
+                  onChange={(e) => setMongoLimit(parseInt(e.target.value) || 50)}
+                  className="w-20 h-8 text-xs bg-zinc-800 border-zinc-700"
+                  placeholder="Limit"
+                />
+              </div>
+              <textarea
+                value={mongoQuery}
+                onChange={(e) => setMongoQuery(e.target.value)}
+                className="w-full h-28 bg-zinc-800 border border-zinc-700 rounded-md p-3 text-xs font-mono text-zinc-300 resize-y focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder='{"symbol": "RELIANCE"}'
+              />
+              <p className="text-[10px] text-zinc-600">
+                MongoDB find() query as JSON. Only read operations allowed. Write operators ($set, $delete, etc.) are blocked.
+              </p>
+            </TabsContent>
+
+            <TabsContent value="postgresql" className="space-y-3 mt-3">
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={pgLimit}
+                  onChange={(e) => setPgLimit(parseInt(e.target.value) || 50)}
+                  className="w-20 h-8 text-xs bg-zinc-800 border-zinc-700"
+                  placeholder="Limit"
+                />
+              </div>
+              <textarea
+                value={pgSql}
+                onChange={(e) => setPgSql(e.target.value)}
+                className="w-full h-28 bg-zinc-800 border border-zinc-700 rounded-md p-3 text-xs font-mono text-zinc-300 resize-y focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                placeholder="SELECT * FROM prices_daily WHERE symbol = 'RELIANCE' LIMIT 10"
+              />
+              <p className="text-[10px] text-zinc-600">
+                Only SELECT statements allowed. Queries run in a read-only transaction.
+              </p>
+            </TabsContent>
+          </Tabs>
+
+          <Button onClick={runQuery} disabled={running || (queryType === "mongodb" && !mongoCollection)} size="sm">
+            {running ? <RefreshCw className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Play className="h-3.5 w-3.5 mr-1" />}
+            Run Query
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Error */}
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-xs text-red-400">
+          <div className="flex items-center gap-2 font-medium"><XCircle className="h-3.5 w-3.5" /> Error</div>
+          <p className="mt-1 font-mono">{error}</p>
+        </div>
+      )}
+
+      {/* Results */}
+      {results && (
+        <Card className="bg-zinc-900/50 border-zinc-800">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span>Results</span>
+              <span className="text-xs text-zinc-500 font-normal">
+                {results.count ?? results.documents?.length ?? 0} documents
+                {results.execution_time_ms && ` | ${results.execution_time_ms}ms`}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {(results.documents || results.rows || []).length === 0 ? (
+              <p className="text-xs text-zinc-500 text-center py-4">No results</p>
+            ) : (
+              <ScrollArea className="max-h-[500px]">
+                <div className="space-y-2">
+                  {(results.documents || results.rows || []).map((doc, i) => (
+                    <pre key={i} className="bg-zinc-800/70 rounded p-3 text-xs font-mono text-zinc-300 whitespace-pre-wrap break-all max-h-40 overflow-auto">
+                      {JSON.stringify(doc, null, 2)}
+                    </pre>
+                  ))}
+                </div>
+              </ScrollArea>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+//  Tools Tab (Backup, Size History, Collection Comparison)
+// ============================================================
+
+function ToolsTab() {
+  const [toolSection, setToolSection] = useState("backup");
+
+  return (
+    <div className="mt-4 space-y-4">
+      <Tabs value={toolSection} onValueChange={setToolSection}>
+        <TabsList className="bg-zinc-800/80 border border-zinc-700/50">
+          <TabsTrigger value="backup"><Archive className="h-3.5 w-3.5 mr-1" />Backup</TabsTrigger>
+          <TabsTrigger value="size-history"><BarChart3 className="h-3.5 w-3.5 mr-1" />Size History</TabsTrigger>
+          <TabsTrigger value="compare"><GitCompare className="h-3.5 w-3.5 mr-1" />Compare</TabsTrigger>
+          <TabsTrigger value="export"><Download className="h-3.5 w-3.5 mr-1" />Export</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="backup"><BackupTool /></TabsContent>
+        <TabsContent value="size-history"><SizeHistoryTool /></TabsContent>
+        <TabsContent value="compare"><ComparisonTool /></TabsContent>
+        <TabsContent value="export"><ExportTool /></TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function BackupTool() {
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const handleBackup = async () => {
+    if (!window.confirm("Trigger a MongoDB backup now?")) return;
+    setRunning(true);
+    setResult(null);
+    try {
+      const r = await triggerBackup();
+      setResult(r.data);
+      toast.success("Backup completed");
+    } catch (err) {
+      setResult({ status: "error", error: err.response?.data?.detail || "Backup failed" });
+      toast.error("Backup failed");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Card className="bg-zinc-900/50 border-zinc-800 mt-3">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Archive className="h-4 w-4 text-orange-400" />
+          Database Backup
+        </CardTitle>
+        <p className="text-xs text-zinc-500">Trigger a MongoDB backup using the backup script</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Button onClick={handleBackup} disabled={running} size="sm">
+          {running ? <RefreshCw className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Archive className="h-3.5 w-3.5 mr-1" />}
+          {running ? "Running Backup..." : "Trigger Backup"}
+        </Button>
+        {result && (
+          <div className={`rounded-lg p-3 text-xs ${result.status === "error" ? "bg-red-500/10 border border-red-500/30" : "bg-emerald-500/10 border border-emerald-500/30"}`}>
+            <div className="flex items-center gap-2 font-medium mb-1">
+              {result.status === "error" ? (
+                <><XCircle className="h-3.5 w-3.5 text-red-400" /><span className="text-red-400">Failed</span></>
+              ) : (
+                <><CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /><span className="text-emerald-400">Success</span></>
+              )}
+            </div>
+            {result.error && <p className="text-red-300 font-mono">{result.error}</p>}
+            {result.output && <pre className="text-zinc-300 font-mono whitespace-pre-wrap max-h-40 overflow-auto">{result.output}</pre>}
+            {result.backup_path && <p className="text-zinc-400 mt-1">Path: <span className="font-mono">{result.backup_path}</span></p>}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SizeHistoryTool() {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(30);
+
+  const fetchHistory = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await getSizeHistory(days);
+      setData(r.data || []);
+    } catch {
+      toast.error("Failed to load size history");
+    } finally {
+      setLoading(false);
+    }
+  }, [days]);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  const handleRecordSnapshot = async () => {
+    try {
+      await recordSizeSnapshot();
+      toast.success("Size snapshot recorded");
+      fetchHistory();
+    } catch {
+      toast.error("Failed to record snapshot");
+    }
+  };
+
+  return (
+    <Card className="bg-zinc-900/50 border-zinc-800 mt-3">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-cyan-400" />
+          Storage Size History
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex gap-2 items-center">
+          <Select value={String(days)} onValueChange={(v) => setDays(parseInt(v))}>
+            <SelectTrigger className="w-[130px] h-8 text-xs bg-zinc-800 border-zinc-700">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="7">Last 7 Days</SelectItem>
+              <SelectItem value="30">Last 30 Days</SelectItem>
+              <SelectItem value="90">Last 90 Days</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button size="sm" variant="outline" onClick={handleRecordSnapshot}>
+            <Plus className="h-3.5 w-3.5 mr-1" />Record Snapshot
+          </Button>
+        </div>
+
+        {loading ? (
+          <SectionLoading />
+        ) : data.length === 0 ? (
+          <p className="text-xs text-zinc-500 text-center py-8">No size history data yet. Click "Record Snapshot" to start tracking.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={250}>
+            <LineChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272A" />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#71717A" }} tickFormatter={(v) => v.slice(5)} />
+              <YAxis tick={{ fontSize: 10, fill: "#71717A" }} />
+              <Tooltip
+                contentStyle={{ background: "#18181B", border: "1px solid #27272A", borderRadius: 8, fontSize: 12 }}
+                labelStyle={{ color: "#A1A1AA" }}
+              />
+              <Line type="monotone" dataKey="mongo_docs" stroke="#3B82F6" name="MongoDB Docs" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="pg_rows" stroke="#10B981" name="PG Rows" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ComparisonTool() {
+  const [colA, setColA] = useState("");
+  const [colB, setColB] = useState("");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [collections, setCollections] = useState([]);
+
+  useEffect(() => {
+    getMongoCollections()
+      .then((r) => setCollections(r.data.collections || []))
+      .catch(() => {});
+  }, []);
+
+  const handleCompare = async () => {
+    if (!colA || !colB) { toast.error("Select two collections"); return; }
+    setLoading(true);
+    setResult(null);
+    try {
+      const r = await compareCollections(colA, colB);
+      setResult(r.data);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Comparison failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card className="bg-zinc-900/50 border-zinc-800 mt-3">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <GitCompare className="h-4 w-4 text-violet-400" />
+          Collection Comparison
+        </CardTitle>
+        <p className="text-xs text-zinc-500">Compare schema and stats of two MongoDB collections</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex gap-2 items-center flex-wrap">
+          <Select value={colA} onValueChange={setColA}>
+            <SelectTrigger className="w-[180px] h-8 text-xs bg-zinc-800 border-zinc-700">
+              <SelectValue placeholder="Collection A" />
+            </SelectTrigger>
+            <SelectContent>
+              {collections.map((c) => (
+                <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="text-xs text-zinc-500">vs</span>
+          <Select value={colB} onValueChange={setColB}>
+            <SelectTrigger className="w-[180px] h-8 text-xs bg-zinc-800 border-zinc-700">
+              <SelectValue placeholder="Collection B" />
+            </SelectTrigger>
+            <SelectContent>
+              {collections.map((c) => (
+                <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="sm" onClick={handleCompare} disabled={loading || !colA || !colB}>
+            {loading ? <RefreshCw className="h-3.5 w-3.5 mr-1 animate-spin" /> : <GitCompare className="h-3.5 w-3.5 mr-1" />}
+            Compare
+          </Button>
+        </div>
+
+        {result && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+            {[result.a, result.b].map((col, i) => (
+              <div key={i} className="bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/50">
+                <h4 className="text-xs font-medium text-zinc-300 mb-2 font-mono">{col?.name || (i === 0 ? colA : colB)}</h4>
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between"><span className="text-zinc-500">Documents</span><span className="font-mono">{col?.document_count?.toLocaleString()}</span></div>
+                  <div className="flex justify-between"><span className="text-zinc-500">Fields</span><span className="font-mono">{col?.field_count}</span></div>
+                </div>
+                {col?.fields && (
+                  <div className="mt-2 space-y-0.5">
+                    {Object.entries(col.fields).map(([field, types]) => (
+                      <div key={field} className="text-[10px] flex justify-between">
+                        <span className="font-mono text-zinc-400">{field}</span>
+                        <span className="text-zinc-600">{Array.isArray(types) ? types.join(", ") : types}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            {result.common_fields && (
+              <div className="md:col-span-2 bg-zinc-800/30 rounded-lg p-3 border border-zinc-700/30">
+                <h4 className="text-xs font-medium text-zinc-400 mb-1">Common Fields: {result.common_fields.length}</h4>
+                <div className="flex flex-wrap gap-1">
+                  {result.common_fields.map((f) => (
+                    <Badge key={f} variant="outline" className="text-[10px]">{f}</Badge>
+                  ))}
+                </div>
+                {result.unique_to_a?.length > 0 && (
+                  <div className="mt-2">
+                    <span className="text-[10px] text-zinc-500">Only in {colA}: </span>
+                    {result.unique_to_a.map((f) => (
+                      <Badge key={f} variant="outline" className="text-[10px] border-blue-500/30 text-blue-400 ml-1">{f}</Badge>
+                    ))}
+                  </div>
+                )}
+                {result.unique_to_b?.length > 0 && (
+                  <div className="mt-1">
+                    <span className="text-[10px] text-zinc-500">Only in {colB}: </span>
+                    {result.unique_to_b.map((f) => (
+                      <Badge key={f} variant="outline" className="text-[10px] border-emerald-500/30 text-emerald-400 ml-1">{f}</Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ExportTool() {
+  const [exportType, setExportType] = useState("mongodb");
+  const [target, setTarget] = useState("");
+  const [format, setFormat] = useState("json");
+  const [limit, setLimit] = useState(5000);
+  const [exporting, setExporting] = useState(false);
+  const [collections, setCollections] = useState([]);
+  const [tables, setTables] = useState([]);
+
+  useEffect(() => {
+    getMongoCollections().then((r) => setCollections(r.data.collections || [])).catch(() => {});
+    getPgTables().then((r) => setTables(r.data.tables || [])).catch(() => {});
+  }, []);
+
+  const handleExport = async () => {
+    if (!target) { toast.error("Select a target"); return; }
+    setExporting(true);
+    try {
+      const r = exportType === "mongodb"
+        ? await exportCollection(target, format, limit)
+        : await exportTable(target, format, limit);
+
+      const data = r.data;
+      let content, mimeType, ext;
+
+      if (format === "csv") {
+        const headers = (data.headers || []).join(",");
+        const rows = (data.rows || []).map((row) => row.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","));
+        content = [headers, ...rows].join("\n");
+        mimeType = "text/csv";
+        ext = "csv";
+      } else {
+        content = JSON.stringify(data.documents || data, null, 2);
+        mimeType = "application/json";
+        ext = "json";
+      }
+
+      const blob = new Blob([content], { type: mimeType });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${target}_export.${ext}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success(`Exported ${target} as ${format.toUpperCase()}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <Card className="bg-zinc-900/50 border-zinc-800 mt-3">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Download className="h-4 w-4 text-blue-400" />
+          Export Data
+        </CardTitle>
+        <p className="text-xs text-zinc-500">Export collection or table data as JSON or CSV</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex gap-2 flex-wrap items-center">
+          <Select value={exportType} onValueChange={(v) => { setExportType(v); setTarget(""); }}>
+            <SelectTrigger className="w-[140px] h-8 text-xs bg-zinc-800 border-zinc-700">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mongodb">MongoDB</SelectItem>
+              <SelectItem value="postgresql">PostgreSQL</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={target} onValueChange={setTarget}>
+            <SelectTrigger className="w-[200px] h-8 text-xs bg-zinc-800 border-zinc-700">
+              <SelectValue placeholder="Select target" />
+            </SelectTrigger>
+            <SelectContent>
+              {(exportType === "mongodb" ? collections : tables).map((item) => (
+                <SelectItem key={item.name} value={item.name}>{item.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={format} onValueChange={setFormat}>
+            <SelectTrigger className="w-[100px] h-8 text-xs bg-zinc-800 border-zinc-700">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="json">JSON</SelectItem>
+              <SelectItem value="csv">CSV</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            type="number"
+            min={1}
+            max={10000}
+            value={limit}
+            onChange={(e) => setLimit(parseInt(e.target.value) || 5000)}
+            className="w-24 h-8 text-xs bg-zinc-800 border-zinc-700"
+            placeholder="Limit"
+          />
+          <Button size="sm" onClick={handleExport} disabled={exporting || !target}>
+            {exporting ? <RefreshCw className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1" />}
+            Export
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+//  Help Panel
+// ============================================================
+
+function HelpPanel({ open, onClose }) {
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="bg-zinc-900 border-zinc-800 max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <HelpCircle className="h-5 w-5 text-blue-400" />
+            Database Dashboard Help
+          </DialogTitle>
+          <DialogDescription>Quick reference for all dashboard features</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 text-xs text-zinc-300">
+          <HelpSection title="Overview Tab" icon={Layers}>
+            Displays storage summary across MongoDB, PostgreSQL, and Redis. Shows collection/table sizes,
+            data flow pipeline stages, and connection details. Storage chart visualizes document/row counts.
+          </HelpSection>
+          <HelpSection title="Data Management" icon={Edit3}>
+            Full CRUD operations for Watchlist, Portfolio, and Alerts. Click the Edit icon to inline-edit
+            a row, or use the Add button to create new entries. Audit logging is automatic for all changes.
+          </HelpSection>
+          <HelpSection title="MongoDB / PostgreSQL" icon={Database}>
+            Browse collections and tables. View sample data (paginated) or inferred schema with indexes.
+            Delete individual documents from deletable collections (hover to reveal delete button).
+          </HelpSection>
+          <HelpSection title="Redis" icon={Zap}>
+            View all cache keys grouped by prefix. See cache hit/miss stats. Use Flush Cache to clear
+            all entries (requires confirmation).
+          </HelpSection>
+          <HelpSection title="Activity Tab" icon={Activity}>
+            Recent database activity, errors with trend chart, and full audit log. Filter by date range
+            (24h/7d/30d), collection, and status. Audit log supports action/store/collection filters.
+          </HelpSection>
+          <HelpSection title="Query Playground" icon={Terminal}>
+            Execute read-only queries. MongoDB: JSON find queries on any collection. PostgreSQL: SELECT-only
+            SQL statements. All queries run in read-only mode for safety.
+          </HelpSection>
+          <HelpSection title="Tools" icon={Archive}>
+            <strong>Backup:</strong> Trigger MongoDB backup on demand.{" "}
+            <strong>Size History:</strong> Track storage growth over time with daily snapshots.{" "}
+            <strong>Compare:</strong> Side-by-side schema comparison of two collections.{" "}
+            <strong>Export:</strong> Download data as JSON or CSV.
+          </HelpSection>
+          <HelpSection title="Settings" icon={Settings}>
+            Configure Safe Mode (confirmation for destructive ops), auto-refresh interval, page size,
+            and alert thresholds for storage, memory, connection pool, and error rate.
+          </HelpSection>
+          <Separator className="bg-zinc-800" />
+          <div className="text-zinc-500">
+            <strong className="text-zinc-400">Safe Mode:</strong> When enabled, destructive actions (delete, flush, backup) require
+            explicit confirmation. Toggle via the shield icon in the header.
+          </div>
+          <div className="text-zinc-500">
+            <strong className="text-zinc-400">WebSocket:</strong> The green dot in the header indicates a live WebSocket connection
+            pushing real-time error counts and threshold alerts every 10 seconds.
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function HelpSection({ title, icon: Icon, children }) {
+  return (
+    <div>
+      <h4 className="text-sm font-medium text-zinc-200 flex items-center gap-2 mb-1">
+        <Icon className="h-3.5 w-3.5 text-blue-400" />
+        {title}
+      </h4>
+      <p className="text-zinc-400 ml-5">{children}</p>
     </div>
   );
 }

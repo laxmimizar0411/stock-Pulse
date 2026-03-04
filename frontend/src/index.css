@@ -113,3 +113,52 @@ code {
     @apply bg-background text-foreground;
   }
 }
+
+/* Database Dashboard Light Mode */
+.db-dashboard-light {
+  --db-bg: #f8fafc;
+  --db-card: #ffffff;
+  --db-border: #e2e8f0;
+  --db-text: #1e293b;
+  --db-text-muted: #64748b;
+}
+
+.db-dashboard-light,
+.db-dashboard-light .bg-zinc-900\/50 {
+  background-color: var(--db-card) !important;
+  color: var(--db-text);
+}
+
+.db-dashboard-light .border-zinc-800,
+.db-dashboard-light .border-zinc-700\/50,
+.db-dashboard-light .border-zinc-700 {
+  border-color: var(--db-border) !important;
+}
+
+.db-dashboard-light .bg-zinc-800\/80,
+.db-dashboard-light .bg-zinc-800\/50,
+.db-dashboard-light .bg-zinc-800\/70,
+.db-dashboard-light .bg-zinc-800\/40,
+.db-dashboard-light .bg-zinc-800\/30,
+.db-dashboard-light .bg-zinc-800 {
+  background-color: #f1f5f9 !important;
+}
+
+.db-dashboard-light .text-zinc-100,
+.db-dashboard-light .text-zinc-200,
+.db-dashboard-light .text-zinc-300 {
+  color: #1e293b !important;
+}
+
+.db-dashboard-light .text-zinc-400,
+.db-dashboard-light .text-zinc-500 {
+  color: #64748b !important;
+}
+
+.db-dashboard-light .text-zinc-600 {
+  color: #94a3b8 !important;
+}
+
+.db-dashboard-light .hover\:bg-zinc-800:hover {
+  background-color: #e2e8f0 !important;
+}

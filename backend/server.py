@@ -2367,6 +2367,85 @@ async def websocket_with_id(websocket: WebSocket, client_id: str):
         connection_manager.disconnect(client_id)
 
 
+# ==================== DASHBOARD WEBSOCKET ====================
+
+# Simple in-memory set of dashboard WS clients
+_dashboard_ws_clients: set = set()
+
+
+@app.websocket("/ws/dashboard")
+async def dashboard_websocket(websocket: WebSocket):
+    """WebSocket for real-time dashboard events (activity, errors, thresholds)."""
+    import asyncio as _asyncio
+
+    await websocket.accept()
+    _dashboard_ws_clients.add(websocket)
+    logger.info(f"Dashboard WS client connected. Total: {len(_dashboard_ws_clients)}")
+
+    try:
+        # Push events every 10 seconds
+        while True:
+            try:
+                overview_data = {}
+                if _dashboard_svc:
+                    # Lightweight pulse: doc counts + error count + thresholds
+                    mongo_colls = await db.list_collection_names()
+                    total_docs = 0
+                    for c in mongo_colls:
+                        total_docs += await db[c].count_documents({})
+
+                    threshold_alerts = await _dashboard_svc.check_thresholds()
+
+                    # Recent errors in last 5 min
+                    five_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+                    recent_error_count = await db.pipeline_jobs.count_documents(
+                        {"status": {"$in": ["failed", "error"]}, "created_at": {"$gte": five_min_ago}}
+                    )
+                    recent_error_count += await db.extraction_log.count_documents(
+                        {"status": {"$in": ["failed", "error"]}, "started_at": {"$gte": five_min_ago}}
+                    )
+
+                    overview_data = {
+                        "type": "dashboard_pulse",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "mongo_total_docs": total_docs,
+                        "mongo_collections": len(mongo_colls),
+                        "recent_errors_5m": recent_error_count,
+                        "threshold_alerts": len(threshold_alerts),
+                        "alerts": [a["message"] for a in threshold_alerts[:3]],
+                    }
+
+                    # Add Redis info
+                    if cache and cache.is_redis_available:
+                        stats = cache.get_stats()
+                        overview_data["redis_keys"] = stats.get("key_count", 0)
+
+                    # Add PG info
+                    if _ts_store and _ts_store._is_initialized:
+                        try:
+                            pg_stats = await _ts_store.get_stats()
+                            overview_data["pg_total_rows"] = sum(
+                                t.get("rows", 0) for t in pg_stats.values()
+                                if isinstance(t, dict) and "rows" in t
+                            )
+                        except Exception:
+                            pass
+
+                await websocket.send_json(overview_data)
+            except Exception as e:
+                logger.debug(f"Dashboard WS send error: {e}")
+                break
+
+            await _asyncio.sleep(10)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _dashboard_ws_clients.discard(websocket)
+        logger.info(f"Dashboard WS client disconnected. Total: {len(_dashboard_ws_clients)}")
+
+
 # ==================== DATABASE INDEX SETUP ====================
 async def _ensure_mongodb_indexes(database):
     """Create MongoDB indexes at startup for all collections.
@@ -2480,6 +2559,12 @@ async def startup_event():
         )
         init_dashboard_router(_dashboard_svc)
         logger.info("Database Dashboard service initialized")
+        # Record initial size snapshot
+        try:
+            await _dashboard_svc.record_size_snapshot()
+            logger.info("Database size snapshot recorded")
+        except Exception as snap_err:
+            logger.debug(f"Size snapshot on startup: {snap_err}")
     except Exception as e:
         logger.warning(f"Database Dashboard service init warning: {e}")
 

@@ -155,6 +155,34 @@ export const getAuditLog = (page = 1, pageSize = 50, filters = {}) =>
   API.get("/database/audit-log", { params: { page, page_size: pageSize, ...filters } });
 export const writeAuditLog = (entry) => API.post("/database/audit-log", entry);
 
+// Database Dashboard - Export
+export const exportCollection = (name, format = "json", limit = 5000) =>
+  API.get(`/database/collections/${name}/export`, { params: { format, limit } });
+export const exportTable = (name, format = "json", limit = 5000) =>
+  API.get(`/database/tables/${name}/export`, { params: { format, limit } });
+
+// Database Dashboard - Bulk Operations
+export const bulkDeleteDocuments = (name, idField, idValues) =>
+  API.post(`/database/collections/${name}/bulk-delete`, { id_field: idField, id_values: idValues });
+
+// Database Dashboard - Query Playground
+export const executeMongoQuery = (collection, query = {}, limit = 50) =>
+  API.post("/database/query/mongodb", { collection, query, limit });
+export const executePgQuery = (sql, limit = 50) =>
+  API.post("/database/query/postgresql", { sql, limit });
+
+// Database Dashboard - Backup
+export const triggerBackup = () => API.post("/database/backup");
+
+// Database Dashboard - Size History
+export const recordSizeSnapshot = () => API.post("/database/size-snapshot");
+export const getSizeHistory = (days = 30) =>
+  API.get("/database/size-history", { params: { days } });
+
+// Database Dashboard - Collection Comparison
+export const compareCollections = (a, b) =>
+  API.get("/database/compare", { params: { a, b } });
+
 // Cache
 export const getCacheStats = () => API.get("/cache/stats");
 export const flushCache = () => API.delete("/cache/flush");
