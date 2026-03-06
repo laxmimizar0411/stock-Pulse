@@ -492,6 +492,446 @@ class TimeSeriesStore:
             return [dict(r) for r in rows]
     
     # ========================
+    # Derived Metrics Daily
+    # ========================
+
+    async def upsert_derived_metrics(self, records: List[Dict[str, Any]]) -> int:
+        """Insert or update derived price metrics."""
+        if not records:
+            return 0
+
+        query = """
+            INSERT INTO derived_metrics_daily (
+                symbol, date, daily_return_pct, return_5d_pct, return_20d_pct,
+                return_60d_pct, day_range_pct, gap_percentage, week_52_high,
+                week_52_low, distance_from_52w_high, volume_ratio, avg_volume_20d
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            ON CONFLICT (symbol, date) DO UPDATE SET
+                daily_return_pct = EXCLUDED.daily_return_pct,
+                return_5d_pct = EXCLUDED.return_5d_pct,
+                return_20d_pct = EXCLUDED.return_20d_pct,
+                return_60d_pct = EXCLUDED.return_60d_pct,
+                day_range_pct = EXCLUDED.day_range_pct,
+                gap_percentage = EXCLUDED.gap_percentage,
+                week_52_high = EXCLUDED.week_52_high,
+                week_52_low = EXCLUDED.week_52_low,
+                distance_from_52w_high = EXCLUDED.distance_from_52w_high,
+                volume_ratio = EXCLUDED.volume_ratio,
+                avg_volume_20d = EXCLUDED.avg_volume_20d
+        """
+
+        count = 0
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for r in records:
+                    try:
+                        d = r.get("date")
+                        if isinstance(d, str):
+                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        await conn.execute(
+                            query, r.get("symbol", ""), d,
+                            r.get("daily_return_pct"), r.get("return_5d_pct"),
+                            r.get("return_20d_pct"), r.get("return_60d_pct"),
+                            r.get("day_range_pct"), r.get("gap_percentage"),
+                            r.get("week_52_high"), r.get("week_52_low"),
+                            r.get("distance_from_52w_high"), r.get("volume_ratio"),
+                            r.get("avg_volume_20d"),
+                        )
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Error upserting derived metrics for {r.get('symbol')}: {e}")
+        return count
+
+    async def get_derived_metrics(
+        self, symbol: str, start_date: Optional[str] = None,
+        end_date: Optional[str] = None, limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Get derived price metrics for a symbol."""
+        conditions = ["symbol = $1"]
+        params: list = [symbol]
+        idx = 2
+        if start_date:
+            conditions.append(f"date >= ${idx}")
+            params.append(datetime.strptime(start_date, "%Y-%m-%d").date())
+            idx += 1
+        if end_date:
+            conditions.append(f"date <= ${idx}")
+            params.append(datetime.strptime(end_date, "%Y-%m-%d").date())
+            idx += 1
+        where = " AND ".join(conditions)
+        query = f"SELECT * FROM derived_metrics_daily WHERE {where} ORDER BY date DESC LIMIT {limit}"
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+            return [dict(r) for r in rows]
+
+    # ========================
+    # Valuation Daily
+    # ========================
+
+    async def upsert_valuation(self, records: List[Dict[str, Any]]) -> int:
+        """Insert or update daily valuation metrics."""
+        if not records:
+            return 0
+
+        query = """
+            INSERT INTO valuation_daily (
+                symbol, date, market_cap, enterprise_value, pe_ratio, pe_ratio_forward,
+                peg_ratio, pb_ratio, ps_ratio, ev_to_ebitda, ev_to_sales,
+                dividend_yield, fcf_yield, earnings_yield, sector_avg_pe,
+                sector_avg_roe, industry_avg_pe, historical_pe_median, sector_performance
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+            ON CONFLICT (symbol, date) DO UPDATE SET
+                market_cap = EXCLUDED.market_cap, enterprise_value = EXCLUDED.enterprise_value,
+                pe_ratio = EXCLUDED.pe_ratio, pe_ratio_forward = EXCLUDED.pe_ratio_forward,
+                peg_ratio = EXCLUDED.peg_ratio, pb_ratio = EXCLUDED.pb_ratio,
+                ps_ratio = EXCLUDED.ps_ratio, ev_to_ebitda = EXCLUDED.ev_to_ebitda,
+                ev_to_sales = EXCLUDED.ev_to_sales, dividend_yield = EXCLUDED.dividend_yield,
+                fcf_yield = EXCLUDED.fcf_yield, earnings_yield = EXCLUDED.earnings_yield,
+                sector_avg_pe = EXCLUDED.sector_avg_pe, sector_avg_roe = EXCLUDED.sector_avg_roe,
+                industry_avg_pe = EXCLUDED.industry_avg_pe,
+                historical_pe_median = EXCLUDED.historical_pe_median,
+                sector_performance = EXCLUDED.sector_performance
+        """
+
+        count = 0
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for r in records:
+                    try:
+                        d = r.get("date")
+                        if isinstance(d, str):
+                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        await conn.execute(
+                            query, r.get("symbol", ""), d,
+                            r.get("market_cap"), r.get("enterprise_value"),
+                            r.get("pe_ratio"), r.get("pe_ratio_forward"),
+                            r.get("peg_ratio"), r.get("pb_ratio"),
+                            r.get("ps_ratio"), r.get("ev_to_ebitda"),
+                            r.get("ev_to_sales"), r.get("dividend_yield"),
+                            r.get("fcf_yield"), r.get("earnings_yield"),
+                            r.get("sector_avg_pe"), r.get("sector_avg_roe"),
+                            r.get("industry_avg_pe"), r.get("historical_pe_median"),
+                            r.get("sector_performance"),
+                        )
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Error upserting valuation for {r.get('symbol')}: {e}")
+        return count
+
+    async def get_valuation(
+        self, symbol: str, limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Get valuation metrics for a symbol."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM valuation_daily WHERE symbol = $1 ORDER BY date DESC LIMIT $2",
+                symbol, limit,
+            )
+            return [dict(r) for r in rows]
+
+    # ========================
+    # ML Features Daily
+    # ========================
+
+    async def upsert_ml_features(self, records: List[Dict[str, Any]]) -> int:
+        """Insert or update ML/strategy feature records."""
+        if not records:
+            return 0
+
+        query = """
+            INSERT INTO ml_features_daily (
+                symbol, date, realized_volatility_10d, realized_volatility_20d,
+                return_1d_pct, return_3d_pct, return_10d_pct, momentum_rank_sector,
+                price_vs_sma20_pct, price_vs_sma50_pct, volume_zscore,
+                volatility_percentile_1y, turnover_20d_avg, free_float_market_cap,
+                days_since_earnings, days_to_earnings, trading_day_of_week,
+                nifty_50_return_1m, fii_net_activity_daily, dii_net_activity_daily,
+                sp500_return_1d, nasdaq_return_1d
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+            ON CONFLICT (symbol, date) DO UPDATE SET
+                realized_volatility_10d = EXCLUDED.realized_volatility_10d,
+                realized_volatility_20d = EXCLUDED.realized_volatility_20d,
+                return_1d_pct = EXCLUDED.return_1d_pct, return_3d_pct = EXCLUDED.return_3d_pct,
+                return_10d_pct = EXCLUDED.return_10d_pct,
+                momentum_rank_sector = EXCLUDED.momentum_rank_sector,
+                price_vs_sma20_pct = EXCLUDED.price_vs_sma20_pct,
+                price_vs_sma50_pct = EXCLUDED.price_vs_sma50_pct,
+                volume_zscore = EXCLUDED.volume_zscore,
+                volatility_percentile_1y = EXCLUDED.volatility_percentile_1y,
+                turnover_20d_avg = EXCLUDED.turnover_20d_avg,
+                free_float_market_cap = EXCLUDED.free_float_market_cap,
+                days_since_earnings = EXCLUDED.days_since_earnings,
+                days_to_earnings = EXCLUDED.days_to_earnings,
+                trading_day_of_week = EXCLUDED.trading_day_of_week,
+                nifty_50_return_1m = EXCLUDED.nifty_50_return_1m,
+                fii_net_activity_daily = EXCLUDED.fii_net_activity_daily,
+                dii_net_activity_daily = EXCLUDED.dii_net_activity_daily,
+                sp500_return_1d = EXCLUDED.sp500_return_1d,
+                nasdaq_return_1d = EXCLUDED.nasdaq_return_1d
+        """
+
+        count = 0
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for r in records:
+                    try:
+                        d = r.get("date")
+                        if isinstance(d, str):
+                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        await conn.execute(
+                            query, r.get("symbol", ""), d,
+                            r.get("realized_volatility_10d"), r.get("realized_volatility_20d"),
+                            r.get("return_1d_pct"), r.get("return_3d_pct"),
+                            r.get("return_10d_pct"), r.get("momentum_rank_sector"),
+                            r.get("price_vs_sma20_pct"), r.get("price_vs_sma50_pct"),
+                            r.get("volume_zscore"), r.get("volatility_percentile_1y"),
+                            r.get("turnover_20d_avg"), r.get("free_float_market_cap"),
+                            r.get("days_since_earnings"), r.get("days_to_earnings"),
+                            r.get("trading_day_of_week"), r.get("nifty_50_return_1m"),
+                            r.get("fii_net_activity_daily"), r.get("dii_net_activity_daily"),
+                            r.get("sp500_return_1d"), r.get("nasdaq_return_1d"),
+                        )
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Error upserting ML features for {r.get('symbol')}: {e}")
+        return count
+
+    async def get_ml_features(
+        self, symbol: str, limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Get ML features for a symbol."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM ml_features_daily WHERE symbol = $1 ORDER BY date DESC LIMIT $2",
+                symbol, limit,
+            )
+            return [dict(r) for r in rows]
+
+    # ========================
+    # Risk Metrics
+    # ========================
+
+    async def upsert_risk_metrics(self, records: List[Dict[str, Any]]) -> int:
+        """Insert or update risk/performance metric records."""
+        if not records:
+            return 0
+
+        query = """
+            INSERT INTO risk_metrics (
+                symbol, date, beta_1y, beta_3y, max_drawdown_1y,
+                sharpe_ratio_1y, sortino_ratio_1y, information_ratio_1y,
+                rolling_volatility_30d, downside_deviation_1y
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            ON CONFLICT (symbol, date) DO UPDATE SET
+                beta_1y = EXCLUDED.beta_1y, beta_3y = EXCLUDED.beta_3y,
+                max_drawdown_1y = EXCLUDED.max_drawdown_1y,
+                sharpe_ratio_1y = EXCLUDED.sharpe_ratio_1y,
+                sortino_ratio_1y = EXCLUDED.sortino_ratio_1y,
+                information_ratio_1y = EXCLUDED.information_ratio_1y,
+                rolling_volatility_30d = EXCLUDED.rolling_volatility_30d,
+                downside_deviation_1y = EXCLUDED.downside_deviation_1y
+        """
+
+        count = 0
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for r in records:
+                    try:
+                        d = r.get("date")
+                        if isinstance(d, str):
+                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        await conn.execute(
+                            query, r.get("symbol", ""), d,
+                            r.get("beta_1y"), r.get("beta_3y"),
+                            r.get("max_drawdown_1y"), r.get("sharpe_ratio_1y"),
+                            r.get("sortino_ratio_1y"), r.get("information_ratio_1y"),
+                            r.get("rolling_volatility_30d"), r.get("downside_deviation_1y"),
+                        )
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Error upserting risk metrics for {r.get('symbol')}: {e}")
+        return count
+
+    async def get_risk_metrics(
+        self, symbol: str, limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Get risk metrics for a symbol."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM risk_metrics WHERE symbol = $1 ORDER BY date DESC LIMIT $2",
+                symbol, limit,
+            )
+            return [dict(r) for r in rows]
+
+    # ========================
+    # Corporate Actions
+    # ========================
+
+    async def insert_corporate_action(self, record: Dict[str, Any]) -> int:
+        """Insert a corporate action record."""
+        query = """
+            INSERT INTO corporate_actions (
+                symbol, action_type, action_date, ex_date, record_date,
+                dividend_per_share, stock_split_ratio, bonus_ratio,
+                rights_issue_ratio, buyback_details, next_earnings_date,
+                pending_events, stock_status, sebi_investigation
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+            RETURNING id
+        """
+        async with self._pool.acquire() as conn:
+            d = record.get("action_date")
+            if isinstance(d, str):
+                d = datetime.strptime(d, "%Y-%m-%d").date()
+            ex = record.get("ex_date")
+            if isinstance(ex, str):
+                ex = datetime.strptime(ex, "%Y-%m-%d").date()
+            rec = record.get("record_date")
+            if isinstance(rec, str):
+                rec = datetime.strptime(rec, "%Y-%m-%d").date()
+            ne = record.get("next_earnings_date")
+            if isinstance(ne, str):
+                ne = datetime.strptime(ne, "%Y-%m-%d").date()
+
+            return await conn.fetchval(
+                query,
+                record.get("symbol", ""), record.get("action_type", ""),
+                d, ex, rec,
+                record.get("dividend_per_share"), record.get("stock_split_ratio"),
+                record.get("bonus_ratio"), record.get("rights_issue_ratio"),
+                record.get("buyback_details"), ne,
+                record.get("pending_events"), record.get("stock_status", "active"),
+                record.get("sebi_investigation", False),
+            )
+
+    async def get_corporate_actions(
+        self, symbol: str, limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Get corporate actions for a symbol."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM corporate_actions WHERE symbol = $1 ORDER BY action_date DESC LIMIT $2",
+                symbol, limit,
+            )
+            return [dict(r) for r in rows]
+
+    # ========================
+    # Macro Indicators
+    # ========================
+
+    async def upsert_macro_indicators(self, records: List[Dict[str, Any]]) -> int:
+        """Insert or update monthly macro indicator records."""
+        if not records:
+            return 0
+
+        query = """
+            INSERT INTO macro_indicators (
+                date, cpi_inflation, iip_growth, rbi_repo_rate, usdinr_rate,
+                crude_brent_price, gold_price, steel_price, copper_price
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            ON CONFLICT (date) DO UPDATE SET
+                cpi_inflation = EXCLUDED.cpi_inflation, iip_growth = EXCLUDED.iip_growth,
+                rbi_repo_rate = EXCLUDED.rbi_repo_rate, usdinr_rate = EXCLUDED.usdinr_rate,
+                crude_brent_price = EXCLUDED.crude_brent_price, gold_price = EXCLUDED.gold_price,
+                steel_price = EXCLUDED.steel_price, copper_price = EXCLUDED.copper_price
+        """
+
+        count = 0
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for r in records:
+                    try:
+                        d = r.get("date")
+                        if isinstance(d, str):
+                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        await conn.execute(
+                            query, d,
+                            r.get("cpi_inflation"), r.get("iip_growth"),
+                            r.get("rbi_repo_rate"), r.get("usdinr_rate"),
+                            r.get("crude_brent_price"), r.get("gold_price"),
+                            r.get("steel_price"), r.get("copper_price"),
+                        )
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Error upserting macro indicators: {e}")
+        return count
+
+    async def get_macro_indicators(self, limit: int = 60) -> List[Dict[str, Any]]:
+        """Get macro indicators."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM macro_indicators ORDER BY date DESC LIMIT $1", limit,
+            )
+            return [dict(r) for r in rows]
+
+    # ========================
+    # Derivatives Daily
+    # ========================
+
+    async def upsert_derivatives(self, records: List[Dict[str, Any]]) -> int:
+        """Insert or update derivatives/F&O data."""
+        if not records:
+            return 0
+
+        query = """
+            INSERT INTO derivatives_daily (
+                symbol, date, futures_oi, futures_oi_change_pct, futures_price_near,
+                futures_basis_pct, fii_index_futures_long_oi, fii_index_futures_short_oi,
+                options_call_oi_total, options_put_oi_total, put_call_ratio_oi,
+                put_call_ratio_volume, options_max_pain_strike, iv_atm_pct,
+                iv_percentile_1y, pcr_index_level
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+            ON CONFLICT (symbol, date) DO UPDATE SET
+                futures_oi = EXCLUDED.futures_oi,
+                futures_oi_change_pct = EXCLUDED.futures_oi_change_pct,
+                futures_price_near = EXCLUDED.futures_price_near,
+                futures_basis_pct = EXCLUDED.futures_basis_pct,
+                fii_index_futures_long_oi = EXCLUDED.fii_index_futures_long_oi,
+                fii_index_futures_short_oi = EXCLUDED.fii_index_futures_short_oi,
+                options_call_oi_total = EXCLUDED.options_call_oi_total,
+                options_put_oi_total = EXCLUDED.options_put_oi_total,
+                put_call_ratio_oi = EXCLUDED.put_call_ratio_oi,
+                put_call_ratio_volume = EXCLUDED.put_call_ratio_volume,
+                options_max_pain_strike = EXCLUDED.options_max_pain_strike,
+                iv_atm_pct = EXCLUDED.iv_atm_pct,
+                iv_percentile_1y = EXCLUDED.iv_percentile_1y,
+                pcr_index_level = EXCLUDED.pcr_index_level
+        """
+
+        count = 0
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for r in records:
+                    try:
+                        d = r.get("date")
+                        if isinstance(d, str):
+                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        await conn.execute(
+                            query, r.get("symbol", ""), d,
+                            r.get("futures_oi"), r.get("futures_oi_change_pct"),
+                            r.get("futures_price_near"), r.get("futures_basis_pct"),
+                            r.get("fii_index_futures_long_oi"), r.get("fii_index_futures_short_oi"),
+                            r.get("options_call_oi_total"), r.get("options_put_oi_total"),
+                            r.get("put_call_ratio_oi"), r.get("put_call_ratio_volume"),
+                            r.get("options_max_pain_strike"), r.get("iv_atm_pct"),
+                            r.get("iv_percentile_1y"), r.get("pcr_index_level"),
+                        )
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Error upserting derivatives for {r.get('symbol')}: {e}")
+        return count
+
+    async def get_derivatives(
+        self, symbol: str, limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Get derivatives data for a symbol."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM derivatives_daily WHERE symbol = $1 ORDER BY date DESC LIMIT $2",
+                symbol, limit,
+            )
+            return [dict(r) for r in rows]
+
+    # ========================
     # Analytics Queries
     # ========================
     
@@ -655,7 +1095,13 @@ class TimeSeriesStore:
         """Get database statistics for monitoring."""
         async with self._pool.acquire() as conn:
             stats = {}
-            for table in ["prices_daily", "technical_indicators", "fundamentals_quarterly", "shareholding_quarterly"]:
+            for table in [
+                "prices_daily", "derived_metrics_daily", "technical_indicators",
+                "ml_features_daily", "risk_metrics", "valuation_daily",
+                "fundamentals_quarterly", "shareholding_quarterly",
+                "corporate_actions", "macro_indicators", "derivatives_daily",
+                "intraday_metrics", "weekly_metrics",
+            ]:
                 row_count = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")
                 size = await conn.fetchval(
                     f"SELECT pg_size_pretty(pg_total_relation_size('{table}'))"

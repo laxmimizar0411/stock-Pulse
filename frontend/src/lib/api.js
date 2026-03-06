@@ -190,4 +190,11 @@ export const flushCache = () => API.delete("/cache/flush");
 // Time-series
 export const getTimeseriesStats = () => API.get("/timeseries/stats");
 
+// PostgreSQL Control & Monitoring
+export const getPostgresStatus = () => API.get("/database/postgres-control/status");
+export const togglePostgres = (action) =>
+  API.post("/database/postgres-control/toggle", { action });
+export const getPostgresResources = () => API.get("/database/postgres-control/resources");
+export const getPostgresHealth = () => API.get("/database/postgres-control/health");
+
 export default API;

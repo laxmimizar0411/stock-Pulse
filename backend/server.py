@@ -17,6 +17,8 @@ from services.mongo_utils import (
 )
 from services.db_dashboard_service import DatabaseDashboardService
 from routes.db_dashboard import router as db_dashboard_router, init_dashboard_router
+from services.pg_control_service import PgControlService
+from routes.pg_control import router as pg_control_router, init_pg_control_router
 
 # Configure logging early
 logging.basicConfig(
@@ -2350,6 +2352,7 @@ async def get_screener_metrics():
 # Include routers
 app.include_router(api_router)
 api_router.include_router(db_dashboard_router)
+api_router.include_router(pg_control_router)
 
 # CORS middleware - default to localhost only, never open wildcard
 _cors_origins_env = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000')
@@ -2595,6 +2598,16 @@ async def startup_event():
             logger.critical("Production: exiting because MongoDB is unreachable (fail-fast).")
             raise SystemExit(1)
         logger.error("Server will start but database operations will fail!")
+
+    # Initialize PostgreSQL Control & Monitoring service
+    try:
+        _pg_control_svc = PgControlService(dsn=timeseries_dsn)
+        if _ts_store and _ts_store._pool:
+            _pg_control_svc.set_pool(_ts_store._pool)
+        init_pg_control_router(_pg_control_svc)
+        logger.info("PostgreSQL control service initialized")
+    except Exception as e:
+        logger.warning(f"PostgreSQL control service init warning: {e}")
 
     # Initialize Database Dashboard service
     try:

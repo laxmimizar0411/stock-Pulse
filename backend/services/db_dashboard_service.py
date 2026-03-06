@@ -90,14 +90,38 @@ PG_TABLE_META = {
         "consumers": ["Charts", "Technical analysis", "Screener", "Backtest"],
         "primary_key": "(symbol, date)",
     },
+    "derived_metrics_daily": {
+        "description": "Derived price metrics (returns, 52-week ranges, volume ratio)",
+        "sources": ["Calculated from prices_daily"],
+        "consumers": ["ML Features", "Screener", "Stock Analyzer"],
+        "primary_key": "(symbol, date)",
+    },
     "technical_indicators": {
-        "description": "Daily technical indicators computed from OHLCV",
+        "description": "Daily technical indicators (SMA, RSI, MACD, Ichimoku, Stochastic, etc.)",
         "sources": ["Technical computation engine (from prices_daily)"],
         "consumers": ["Stock Analyzer", "Screener", "Alerts"],
         "primary_key": "(symbol, date)",
     },
+    "ml_features_daily": {
+        "description": "ML/strategy features (volatility, momentum, macro context)",
+        "sources": ["Calculated from prices_daily, macro sources"],
+        "consumers": ["ML Models", "Prediction Engine", "Strategy Backtest"],
+        "primary_key": "(symbol, date)",
+    },
+    "risk_metrics": {
+        "description": "Risk & performance metrics (beta, Sharpe, drawdown)",
+        "sources": ["Calculated from daily returns"],
+        "consumers": ["Portfolio Optimizer", "Risk Dashboard", "Stock Analyzer"],
+        "primary_key": "(symbol, date)",
+    },
+    "valuation_daily": {
+        "description": "Valuation metrics (P/E, P/B, EV/EBITDA, yields, sector comps)",
+        "sources": ["Calculated from prices + fundamentals"],
+        "consumers": ["Stock Analyzer", "Screener", "Reports"],
+        "primary_key": "(symbol, date)",
+    },
     "fundamentals_quarterly": {
-        "description": "Quarterly income statement, balance sheet, cash flow",
+        "description": "Quarterly/annual income statement, balance sheet, cash flow, ratios",
         "sources": ["Screener.in", "Extraction Pipeline"],
         "consumers": ["Stock Analyzer", "Screener", "Reports"],
         "primary_key": "(symbol, period_end, period_type)",
@@ -107,6 +131,42 @@ PG_TABLE_META = {
         "sources": ["Screener.in", "NSE filings"],
         "consumers": ["Stock Analyzer", "Screener"],
         "primary_key": "(symbol, quarter_end)",
+    },
+    "corporate_actions": {
+        "description": "Corporate actions: dividends, splits, bonuses, buybacks, events",
+        "sources": ["NSE/BSE filings", "Extraction Pipeline"],
+        "consumers": ["Stock Analyzer", "Alerts", "Calendar"],
+        "primary_key": "(id)",
+    },
+    "macro_indicators": {
+        "description": "Monthly macro indicators (CPI, repo rate, commodity prices)",
+        "sources": ["RBI", "MOSPI", "MCX", "Yahoo Finance"],
+        "consumers": ["ML Models", "Dashboard", "Reports"],
+        "primary_key": "(date)",
+    },
+    "derivatives_daily": {
+        "description": "F&O data: futures OI, options PCR, IV, max pain",
+        "sources": ["NSE F&O", "Calculated"],
+        "consumers": ["Stock Analyzer", "ML Models", "Derivatives Dashboard"],
+        "primary_key": "(symbol, date)",
+    },
+    "intraday_metrics": {
+        "description": "Hourly/intraday metrics: RSI, VWAP, VIX, market breadth",
+        "sources": ["NSE", "Calculated from tick data"],
+        "consumers": ["Real-time Dashboard", "Intraday Alerts"],
+        "primary_key": "(symbol, timestamp)",
+    },
+    "weekly_metrics": {
+        "description": "Weekly aggregates: MA crossovers, Google Trends, job growth",
+        "sources": ["Calculated", "Google Trends", "LinkedIn"],
+        "consumers": ["Weekly Reports", "Stock Analyzer"],
+        "primary_key": "(symbol, week_start)",
+    },
+    "schema_migrations": {
+        "description": "Database migration version tracking",
+        "sources": ["Setup scripts"],
+        "consumers": ["Admin", "Setup verification"],
+        "primary_key": "(id)",
     },
 }
 
@@ -139,9 +199,19 @@ COLLECTION_ID_FIELDS = {
 # PostgreSQL table ordering for sample queries
 PG_TABLE_ORDER_BY = {
     "prices_daily": "date DESC, symbol ASC",
+    "derived_metrics_daily": "date DESC, symbol ASC",
     "technical_indicators": "date DESC, symbol ASC",
+    "ml_features_daily": "date DESC, symbol ASC",
+    "risk_metrics": "date DESC, symbol ASC",
+    "valuation_daily": "date DESC, symbol ASC",
     "fundamentals_quarterly": "period_end DESC, symbol ASC",
     "shareholding_quarterly": "quarter_end DESC, symbol ASC",
+    "corporate_actions": "action_date DESC NULLS LAST, symbol ASC",
+    "macro_indicators": "date DESC",
+    "derivatives_daily": "date DESC, symbol ASC",
+    "intraday_metrics": "timestamp DESC, symbol ASC",
+    "weekly_metrics": "week_start DESC, symbol ASC",
+    "schema_migrations": "applied_at DESC",
 }
 
 # Default dashboard settings
@@ -1065,7 +1135,7 @@ class DatabaseDashboardService:
                     "name": "Extraction Pipeline",
                     "description": "Raw data extracted, cleaned, normalized, and validated",
                     "components": ["PipelineOrchestrator", "GrowwExtractor", "NSEBhavcopyExtractor", "ScreenerExtractor"],
-                    "outputs_to": ["MongoDB (stock_data, extraction_log, pipeline_jobs)", "PostgreSQL (prices_daily, technical_indicators)"],
+                    "outputs_to": ["MongoDB (stock_data, extraction_log, pipeline_jobs)", "PostgreSQL (14 tables: prices, technicals, fundamentals, valuations, derivatives, ML features, risk metrics, macro indicators, etc.)"],
                 },
                 {
                     "stage": 3,
@@ -1073,7 +1143,7 @@ class DatabaseDashboardService:
                     "description": "Data stored across three database layers",
                     "stores": {
                         "MongoDB": "Entity/document store - stock data, user data (watchlist/portfolio/alerts), pipeline logs, news, backtest results",
-                        "PostgreSQL": "Time-series store - daily OHLCV prices, technical indicators, quarterly fundamentals and shareholding",
+                        "PostgreSQL": "Time-series store - 14 tables covering daily OHLCV prices, derived metrics, technical indicators, ML features, risk metrics, valuations, quarterly fundamentals/shareholding, corporate actions, macro indicators, derivatives, intraday/weekly metrics",
                         "Redis": "Cache layer - live prices, analysis results, market overview, pipeline status",
                     },
                 },
@@ -1087,7 +1157,7 @@ class DatabaseDashboardService:
                     "stage": 5,
                     "name": "Frontend (React)",
                     "description": "User-facing dashboard, analyzers, and management tools",
-                    "pages": ["Dashboard", "Stock Analyzer", "Screener", "Watchlist", "Portfolio", "Alerts", "Backtest", "News Hub", "Reports", "Data Pipeline", "Database Dashboard"],
+                    "pages": ["Dashboard", "Stock Analyzer", "Screener", "Watchlist", "Portfolio", "Alerts", "Backtest", "News Hub", "Reports", "Data Pipeline", "Database Dashboard", "PG Control"],
                 },
             ],
             "collection_flows": {

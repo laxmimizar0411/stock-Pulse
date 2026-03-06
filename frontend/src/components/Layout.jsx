@@ -17,6 +17,7 @@ import {
   LineChart,
   Database,
   Server,
+  HardDrive,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -32,6 +33,7 @@ const navItems = [
   { path: "/backtest", label: "Backtest", icon: LineChart },
   { path: "/data-pipeline", label: "Data Pipeline", icon: Database },
   { path: "/db-dashboard", label: "DB Dashboard", icon: Server },
+  { path: "/pg-control", label: "PG Control", icon: HardDrive },
   { path: "/news", label: "News Hub", icon: Newspaper },
   { path: "/reports", label: "Reports", icon: FileText },
 ];

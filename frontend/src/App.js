@@ -13,6 +13,7 @@ import Alerts from "@/pages/Alerts";
 import Backtest from "@/pages/Backtest";
 import DataPipeline from "@/pages/DataPipeline";
 import DatabaseDashboard from "@/pages/DatabaseDashboard";
+import PostgresControl from "@/pages/PostgresControl";
 
 function App() {
   return (
@@ -31,6 +32,7 @@ function App() {
             <Route path="/reports" element={<Reports />} />
             <Route path="/data-pipeline" element={<DataPipeline />} />
             <Route path="/db-dashboard" element={<DatabaseDashboard />} />
+            <Route path="/pg-control" element={<PostgresControl />} />
           </Routes>
         </Layout>
       </BrowserRouter>
