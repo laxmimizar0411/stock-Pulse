@@ -189,6 +189,32 @@ export const flushCache = () => API.delete("/cache/flush");
 
 // Time-series
 export const getTimeseriesStats = () => API.get("/timeseries/stats");
+export const getTimeseriesPrices = (symbol, params = {}) =>
+  API.get(`/timeseries/prices/${symbol}`, { params });
+export const getTimeseriesDerivedMetrics = (symbol, params = {}) =>
+  API.get(`/timeseries/derived-metrics/${symbol}`, { params });
+export const getTimeseriesTechnicals = (symbol, params = {}) =>
+  API.get(`/timeseries/technicals/${symbol}`, { params });
+export const getTimeseriesFundamentals = (symbol, params = {}) =>
+  API.get(`/timeseries/fundamentals/${symbol}`, { params });
+export const getTimeseriesShareholding = (symbol, params = {}) =>
+  API.get(`/timeseries/shareholding/${symbol}`, { params });
+export const getTimeseriesValuation = (symbol, params = {}) =>
+  API.get(`/timeseries/valuation/${symbol}`, { params });
+export const getTimeseriesMlFeatures = (symbol, params = {}) =>
+  API.get(`/timeseries/ml-features/${symbol}`, { params });
+export const getTimeseriesRiskMetrics = (symbol, params = {}) =>
+  API.get(`/timeseries/risk-metrics/${symbol}`, { params });
+export const getTimeseriesCorporateActions = (symbol, params = {}) =>
+  API.get(`/timeseries/corporate-actions/${symbol}`, { params });
+export const getTimeseriesMacroIndicators = (params = {}) =>
+  API.get("/timeseries/macro-indicators", { params });
+export const getTimeseriesDerivatives = (symbol, params = {}) =>
+  API.get(`/timeseries/derivatives/${symbol}`, { params });
+export const getTimeseriesIntraday = (symbol, params = {}) =>
+  API.get(`/timeseries/intraday/${symbol}`, { params });
+export const getTimeseriesWeeklyMetrics = (symbol, params = {}) =>
+  API.get(`/timeseries/weekly-metrics/${symbol}`, { params });
 
 // PostgreSQL Control & Monitoring
 export const getPostgresStatus = () => API.get("/database/postgres-control/status");

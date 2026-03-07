@@ -910,6 +910,7 @@ Groww API -> GrowwAPIExtractor -> _transform_quote_data()
 | `9fc8cd5` | feat: complete Database Dashboard gap fixes - CRUD, charts, filters, docs | Session 8 |
 | `82867c9` | feat: add Query Playground, Tools, Help Panel, Export, WebSocket, and theme toggle | Session 8 |
 | `342aa25` | Merge pull request #9 from ShraddheyWamanSatpute/claude/mongodb-production-ready-0AkeH | Merge |
+| (Session 9) | PostgreSQL 14-table schema, PgControlService, PostgresControl page, derivation job, 14 REST endpoints | Session 9 |
 
 ---
 
@@ -922,9 +923,10 @@ Groww API -> GrowwAPIExtractor -> _transform_quote_data()
 As of **March 2026**, the StockPulse system is in a strong **advanced-prototype** state, optimized for **local single-user use** with a clear path to future production deployment:
 
 - **Frontend**
-  - React SPA with 8 main pages: Dashboard, Stock Analyzer, Screener, Watchlist, Portfolio, News Hub, Reports, and Data Pipeline.
+  - React SPA with 9 main pages: Dashboard, Stock Analyzer, Screener, Watchlist, Portfolio, News Hub, Reports, Data Pipeline, and **PG Control** (`/pg-control`).
+  - PG Control: ON/OFF toggle for local Postgres, CPU/RAM/storage monitoring, active connections, pool stats, schema overview (14 tables); auto-refresh 10s.
   - UI built with Tailwind + shadcn/ui; charts and scorecards wired to backend APIs (mock data by default, live data when pipeline + DBs are configured).
-  - Database Dashboard UI (admin view) is available for future use once the backend dashboard API is enabled in your environment.
+  - Database Dashboard UI (admin view) available for DB monitoring and admin.
 
 - **Backend & APIs**
   - FastAPI server exposes full feature set:

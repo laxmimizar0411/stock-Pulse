@@ -192,7 +192,7 @@ await compute_derived_metrics(ts_store)
 | `/api/timeseries/ml-features/{symbol}` | GET | ML features (params: limit) |
 | `/api/timeseries/risk-metrics/{symbol}` | GET | Risk metrics (params: limit) |
 | `/api/timeseries/corporate-actions/{symbol}` | GET | Corporate actions |
-| `/api/timeseries/macro-indicators` | GET | Macro indicators (params: indicator_name) |
+| `/api/timeseries/macro-indicators` | GET | Macro indicators (params: limit) |
 | `/api/timeseries/derivatives/{symbol}` | GET | Derivatives data (params: limit) |
 | `/api/timeseries/intraday/{symbol}` | GET | Intraday metrics (params: start_ts, end_ts) |
 | `/api/timeseries/weekly-metrics/{symbol}` | GET | Weekly metrics (params: limit) |
