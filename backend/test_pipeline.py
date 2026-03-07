@@ -75,7 +75,13 @@ async def test_databases():
         tables = await conn.fetch(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
         )
-        expected = ["prices_daily", "technical_indicators", "fundamentals_quarterly", "shareholding_quarterly"]
+        expected = [
+            "prices_daily", "derived_metrics_daily", "technical_indicators",
+            "ml_features_daily", "risk_metrics", "valuation_daily",
+            "fundamentals_quarterly", "shareholding_quarterly",
+            "corporate_actions", "macro_indicators", "derivatives_daily",
+            "intraday_metrics", "weekly_metrics", "schema_migrations",
+        ]
         table_names = [t["table_name"] for t in tables]
         for name in expected:
             if name in table_names:

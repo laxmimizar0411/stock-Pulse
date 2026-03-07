@@ -424,6 +424,156 @@ async def get_timeseries_prices(
     }
 
 
+@api_router.get("/timeseries/derived-metrics/{symbol}")
+async def get_timeseries_derived_metrics(
+    symbol: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = Query(default=500, le=5000),
+):
+    """Get derived price metrics from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_derived_metrics(symbol.upper(), start_date=start_date, end_date=end_date, limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/valuation/{symbol}")
+async def get_timeseries_valuation(
+    symbol: str,
+    limit: int = Query(default=500, le=5000),
+):
+    """Get valuation metrics from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_valuation(symbol.upper(), limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/ml-features/{symbol}")
+async def get_timeseries_ml_features(
+    symbol: str,
+    limit: int = Query(default=500, le=5000),
+):
+    """Get ML/strategy features from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_ml_features(symbol.upper(), limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/risk-metrics/{symbol}")
+async def get_timeseries_risk_metrics(
+    symbol: str,
+    limit: int = Query(default=500, le=5000),
+):
+    """Get risk & performance metrics from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_risk_metrics(symbol.upper(), limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/corporate-actions/{symbol}")
+async def get_timeseries_corporate_actions(
+    symbol: str,
+    limit: int = Query(default=50, le=500),
+):
+    """Get corporate actions from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_corporate_actions(symbol.upper(), limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/macro-indicators")
+async def get_timeseries_macro_indicators(
+    limit: int = Query(default=60, le=500),
+):
+    """Get macro indicators from PostgreSQL (no symbol required)"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_macro_indicators(limit=limit)
+    return {"count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/derivatives/{symbol}")
+async def get_timeseries_derivatives(
+    symbol: str,
+    limit: int = Query(default=500, le=5000),
+):
+    """Get F&O / derivatives data from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_derivatives(symbol.upper(), limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/intraday/{symbol}")
+async def get_timeseries_intraday(
+    symbol: str,
+    start_ts: Optional[str] = None,
+    end_ts: Optional[str] = None,
+    limit: int = Query(default=500, le=5000),
+):
+    """Get intraday/hourly metrics from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_intraday_metrics(symbol.upper(), start_ts=start_ts, end_ts=end_ts, limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/weekly-metrics/{symbol}")
+async def get_timeseries_weekly_metrics(
+    symbol: str,
+    limit: int = Query(default=104, le=1000),
+):
+    """Get weekly metrics from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_weekly_metrics(symbol.upper(), limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/technicals/{symbol}")
+async def get_timeseries_technicals(
+    symbol: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = Query(default=500, le=5000),
+):
+    """Get technical indicators from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_technicals(symbol.upper(), start_date=start_date, end_date=end_date, limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/fundamentals/{symbol}")
+async def get_timeseries_fundamentals(
+    symbol: str,
+    period_type: str = "quarterly",
+    limit: int = Query(default=40, le=200),
+):
+    """Get quarterly/annual fundamentals from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_fundamentals(symbol.upper(), period_type=period_type, limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
+@api_router.get("/timeseries/shareholding/{symbol}")
+async def get_timeseries_shareholding(
+    symbol: str,
+    limit: int = Query(default=28, le=200),
+):
+    """Get quarterly shareholding from PostgreSQL"""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    data = await _ts_store.get_shareholding(symbol.upper(), limit=limit)
+    return {"symbol": symbol.upper(), "count": len(data), "data": data}
+
+
 # ==================== MARKET OVERVIEW ====================
 @api_router.get("/market/overview")
 async def get_market_overview():

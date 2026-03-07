@@ -1,7 +1,7 @@
 # StockPulse - Complete Development History
 
-> **Document Version**: 4.0
-> **Last Updated**: March 5, 2026
+> **Document Version**: 5.0
+> **Last Updated**: March 7, 2026
 > **Platform**: Indian Stock Market Analysis Platform (NSE/BSE)
 > **Repository**: [github.com/ShraddheyWamanSatpute/Stock-Pulse](https://github.com/ShraddheyWamanSatpute/Stock-Pulse)
 > **Active PR**: [#1 - Hybrid Database Architecture + Pipeline Fixes](https://github.com/ShraddheyWamanSatpute/Stock-Pulse/pull/1)
@@ -338,11 +338,21 @@ MongoDB Collections (10):
 9. `news_articles` - News with sentiment (TTL: 30 days)
 10. `backtest_results` - Strategy backtesting results
 
-PostgreSQL Tables (4):
+PostgreSQL Tables (14):
 1. `prices_daily` - Daily OHLCV (symbol + date unique)
-2. `technical_indicators` - SMA, RSI, MACD, etc. (symbol + date unique)
-3. `fundamentals_quarterly` - Revenue, profit, ratios (symbol + quarter unique)
-4. `shareholding_quarterly` - Promoter, FII, DII holdings (symbol + quarter unique)
+2. `derived_metrics_daily` - Returns, 52-week high/low, volume ratios
+3. `technical_indicators` - SMA, RSI, MACD, Ichimoku, Stochastic, CCI, etc. (27 cols)
+4. `ml_features_daily` - ML predicted scores, anomaly flags
+5. `risk_metrics` - VaR, beta, Sharpe, volatility, max drawdown
+6. `valuation_daily` - P/E, P/B, EV/EBITDA, dividend yield, PEG
+7. `fundamentals_quarterly` - Revenue, profit, ratios (55+ cols)
+8. `shareholding_quarterly` - Promoter, FII, DII holdings
+9. `corporate_actions` - Dividends, splits, bonuses
+10. `macro_indicators` - Repo rate, GDP, CPI, USD/INR
+11. `derivatives_daily` - Futures OI, options, put-call ratio, IV
+12. `intraday_metrics` - VWAP, tick count, bid/ask snapshots (JSONB)
+13. `weekly_metrics` - SMA crossover, sectoral heatmap (JSONB)
+14. `schema_migrations` - Version tracking
 
 Database Setup Script (`backend/setup_databases.py`):
 - Automated setup for all 4 database layers
@@ -471,6 +481,24 @@ Database Setup Script (`backend/setup_databases.py`):
 - All MongoDB production/replica-set features are implemented in a way that **default to local single-node usage** (your current setup).
 - Additional MongoDB documents (`MongoDB_Production_Checklist.md`, `MongoDB_Runbooks.md`) capture future hosted/99.9% SLA guidance without changing current local flow.
 
+### Phase 9: PostgreSQL Full Expansion (v4.0)
+- Expanded PostgreSQL schema from 4 tables to 14 tables with 40+ indexes covering 270+ fields from V2 data spec
+- New tables: derived_metrics_daily, ml_features_daily, risk_metrics, valuation_daily, corporate_actions, macro_indicators, derivatives_daily, intraday_metrics, weekly_metrics, schema_migrations
+- Extended `timeseries_store.py` with 12 upsert methods and 17+ query methods covering all 14 tables
+- Extended screener from 4-table JOIN to 7-table JOIN (added derived, valuation, risk CTEs) with ~50 filter/sort keys
+- Fixed `upsert_technicals` to include all 27 schema columns (added Ichimoku, Stochastic, CCI, Williams %R, CMF, MACD histogram)
+- Fixed `upsert_fundamentals` to dynamically include all 55+ columns via FUND_COLS list
+- Rewrote `_persist_to_timeseries()` in pipeline_service.py from 4-table writes to 9 table categories
+- Added 12 new REST endpoints under `/api/timeseries/` for all table types
+- Created PostgreSQL Control service (`pg_control_service.py`) with start/stop/resource monitoring
+- Created PG Control REST routes (`routes/pg_control.py`) — 4 endpoints
+- Created PG Control frontend UI (`PostgresControl.jsx`) with power toggle, resource cards, per-table storage, connection stats, pool stats, auto-refresh
+- Created derived data computation job (`jobs/derive_metrics.py`) computing daily returns, 52-week metrics, volume ratios, and weekly SMA crossovers
+- Updated `test_pipeline.py` expected tables from 4 to 14
+- Updated `setup_databases.py` docstring and check-only mode for 14 tables
+- Updated `db_dashboard_service.py` metadata for all 14 tables
+- Updated `PROMPT_PostgreSQL_Complete_Local_Setup.md` to reflect full 14-table architecture
+
 ---
 
 ## 5. Current File Structure
@@ -494,14 +522,23 @@ Stock-Pulse/
 │   │   ├── stock_models.py          # Stock, Portfolio, Alert, ScreenerFilter models
 │   │   └── pipeline_models.py       # Pipeline job, config, metrics models
 │   │
+│   ├── jobs/
+│   │   ├── __init__.py              # Jobs package init
+│   │   └── derive_metrics.py        # Derived metrics computation job
+│   │
+│   ├── routes/
+│   │   └── pg_control.py            # PostgreSQL control REST routes
+│   │
 │   ├── services/
 │   │   ├── scoring_engine.py        # 4-tier scoring (D1-D10, R1-R10, Q1-Q9, ML)
 │   │   ├── mock_data.py             # Mock data for 40 stocks
 │   │   ├── llm_service.py           # GPT-4o integration
 │   │   ├── alerts_service.py        # Price alert service (379 lines)
-│   │   ├── pipeline_service.py      # Groww pipeline orchestration (721 lines)
+│   │   ├── pipeline_service.py      # Groww pipeline orchestration (9-table persistence)
 │   │   ├── cache_service.py         # Redis cache with pub/sub (396 lines)
-│   │   └── timeseries_store.py      # PostgreSQL time-series bridge (646 lines)
+│   │   ├── timeseries_store.py      # PostgreSQL time-series bridge (14 tables, 12 upsert + 17 query methods)
+│   │   ├── pg_control_service.py    # PostgreSQL start/stop/resource monitoring
+│   │   └── db_dashboard_service.py  # Database dashboard metadata (14 tables)
 │   │
 │   ├── data_extraction/
 │   │   ├── config/
@@ -532,7 +569,8 @@ Stock-Pulse/
 │       │   ├── Portfolio.jsx        # Portfolio with P&L
 │       │   ├── NewsHub.jsx          # News aggregation
 │       │   ├── Reports.jsx          # Report generation
-│       │   └── DataPipeline.jsx     # Pipeline monitoring dashboard
+│       │   ├── DataPipeline.jsx     # Pipeline monitoring dashboard
+│       │   └── PostgresControl.jsx  # PG control UI (start/stop, resources)
 │       ├── components/
 │       │   ├── Charts.jsx           # Price/volume charts
 │       │   └── ScoreCard.jsx        # Score visualization
@@ -608,6 +646,32 @@ Stock-Pulse/
 | `/api/pipeline/symbols/add` | POST | Add new symbols |
 | `/api/pipeline/symbols/remove` | POST | Remove symbols |
 
+### Time-Series Data (14 endpoints)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/timeseries/stats` | GET | Row counts and pool stats for all 14 tables |
+| `/api/timeseries/prices/{symbol}` | GET | Daily OHLCV |
+| `/api/timeseries/derived-metrics/{symbol}` | GET | Derived daily metrics |
+| `/api/timeseries/technicals/{symbol}` | GET | Technical indicators |
+| `/api/timeseries/fundamentals/{symbol}` | GET | Quarterly fundamentals |
+| `/api/timeseries/shareholding/{symbol}` | GET | Shareholding data |
+| `/api/timeseries/valuation/{symbol}` | GET | Valuation ratios |
+| `/api/timeseries/ml-features/{symbol}` | GET | ML features |
+| `/api/timeseries/risk-metrics/{symbol}` | GET | Risk metrics |
+| `/api/timeseries/corporate-actions/{symbol}` | GET | Corporate actions |
+| `/api/timeseries/macro-indicators` | GET | Macro indicators |
+| `/api/timeseries/derivatives/{symbol}` | GET | Derivatives data |
+| `/api/timeseries/intraday/{symbol}` | GET | Intraday metrics |
+| `/api/timeseries/weekly-metrics/{symbol}` | GET | Weekly metrics |
+
+### PostgreSQL Control
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/database/postgres-control/status` | GET | PG running state, version, uptime |
+| `/api/database/postgres-control/toggle` | POST | Start/stop Postgres |
+| `/api/database/postgres-control/resources` | GET | CPU, RAM, storage, connections, pool |
+| `/api/database/postgres-control/health` | GET | Quick health check |
+
 ### Database & Health
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -639,10 +703,10 @@ Stock-Pulse/
 - **Key indexes**: symbol (unique on watchlist/portfolio), timestamp + symbol on logs
 
 #### Layer 3: PostgreSQL (Time-Series Analytics)
-- **Purpose**: OHLCV storage, technical indicators, fundamentals, screener queries
-- **Tables**: 4 tables with UNIQUE constraints on (symbol, date/quarter)
+- **Purpose**: OHLCV storage, technical indicators, fundamentals, derived metrics, valuation, risk, and more
+- **Tables**: 14 tables with UNIQUE constraints on (symbol, date/quarter) and 40+ indexes
 - **Driver**: asyncpg (async)
-- **Key feature**: 4-table JOIN screener with COLUMN_MAP for dynamic filtering
+- **Key feature**: 7-table JOIN screener with ~50 filter/sort keys via COLUMN_MAP
 
 #### Layer 4: Filesystem (Binary Artifacts)
 - **Purpose**: Reports (PDF/Excel), data exports, ML model files
@@ -723,9 +787,9 @@ news:latest             -> STRING (JSON, TTL 180s)
 |   - Logging & audit trail to MongoDB                         |
 +-------------------------------------------------------------+
 | TimeSeriesStore (timeseries_store.py)                         |
-|   - Upsert to prices_daily, technical_indicators             |
-|   - Upsert to fundamentals_quarterly, shareholding_quarterly |
-|   - 4-table JOIN screener for /api/screener                  |
+|   - 12 upsert methods for all 14 tables                      |
+|   - 17+ query methods with filtering and pagination           |
+|   - 7-table JOIN screener for /api/screener (~50 sort/filter)|
 +-------------------------------------------------------------+
 ```
 
@@ -849,7 +913,7 @@ Groww API -> GrowwAPIExtractor -> _transform_quote_data()
 
 ---
 
-*Document maintained as part of StockPulse development history. Last updated: March 5, 2026.*
+*Document maintained as part of StockPulse development history. Last updated: March 7, 2026.*
 
 ---
 
@@ -874,7 +938,7 @@ As of **March 2026**, the StockPulse system is in a strong **advanced-prototype*
 - **Databases**
   - **MongoDB**: Primary store for user data (watchlist, portfolio, alerts), pipeline jobs, extraction logs, quality reports, news, and backtest results. Indexes, backup script, and safety utilities are implemented and used.
   - **Redis**: Integrated cache layer for prices, analysis, pipeline status, and screener results; falls back to in-memory cache if Redis is not available.
-  - **PostgreSQL**: Time-series + analytics layer implemented and wired for OHLCV, technicals, fundamentals, screener, and Bhavcopy ingestion; can be enabled when you run Postgres locally.
+  - **PostgreSQL**: Time-series + analytics layer fully expanded to 14 tables with 40+ indexes covering 270+ fields. 12 upsert methods, 17+ query methods, 7-table JOIN screener with ~50 filter/sort keys. Pipeline persists to 9 table categories. Derived metrics job computes daily returns, 52-week metrics, and weekly crossovers. PG Control UI provides start/stop toggle and resource monitoring. Fully operational when Postgres runs locally.
   - MongoDB configuration is **environment-aware**:
     - In your current **development/local** setup, `ENVIRONMENT` defaults to `development` and `MONGO_URL` safely defaults to `mongodb://localhost:27017`
     - In a future **production** setup, `MONGO_URL` will be required, must not use localhost, and the app will fail fast if Mongo is unreachable

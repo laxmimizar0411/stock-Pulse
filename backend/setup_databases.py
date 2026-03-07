@@ -3,7 +3,12 @@
 StockPulse Database Setup Script
 
 Creates and verifies all three database layers + filesystem directories:
-  1. PostgreSQL  – 4 time-series tables with indexes
+  1. PostgreSQL  – 14 time-series tables with 40+ indexes
+     (prices_daily, derived_metrics_daily, technical_indicators,
+      ml_features_daily, risk_metrics, valuation_daily,
+      fundamentals_quarterly, shareholding_quarterly,
+      corporate_actions, macro_indicators, derivatives_daily,
+      intraday_metrics, weekly_metrics, schema_migrations)
   2. MongoDB     – 10 collections with indexes + schema validation
   3. Redis       – Connectivity verification
   4. Filesystem  – Required local directories

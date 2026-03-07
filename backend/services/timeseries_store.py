@@ -1,11 +1,12 @@
 """
 PostgreSQL Time-Series Store for StockPulse
 
-Handles storage and retrieval of time-series data:
-- Daily OHLCV prices (prices_daily table)
-- Technical indicators (technical_indicators table)
-- Quarterly fundamentals (fundamentals_quarterly table)
-- Quarterly shareholding (shareholding_quarterly table)
+Handles storage and retrieval of time-series data across 14 tables:
+- prices_daily, derived_metrics_daily, technical_indicators,
+  ml_features_daily, risk_metrics, valuation_daily,
+  fundamentals_quarterly, shareholding_quarterly,
+  corporate_actions, macro_indicators, derivatives_daily,
+  intraday_metrics, weekly_metrics, schema_migrations
 
 Uses asyncpg for high-performance async PostgreSQL access.
 """
@@ -256,29 +257,40 @@ class TimeSeriesStore:
     # ========================
     
     async def upsert_technicals(self, records: List[Dict[str, Any]]) -> int:
-        """Insert or update technical indicator records."""
+        """Insert or update technical indicator records (all 27 columns from schema)."""
         if not records:
             return 0
-        
+
         query = """
             INSERT INTO technical_indicators (
                 symbol, date, sma_20, sma_50, sma_200, ema_12, ema_26,
-                rsi_14, macd, macd_signal, bollinger_upper, bollinger_lower,
-                atr_14, adx_14, obv, support_level, resistance_level
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                rsi_14, macd, macd_signal, macd_histogram,
+                bollinger_upper, bollinger_lower,
+                atr_14, adx_14, obv, support_level, resistance_level,
+                ichimoku_tenkan, ichimoku_kijun, ichimoku_senkou_a, ichimoku_senkou_b,
+                stoch_k, stoch_d, cci_20, williams_r, cmf
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
             ON CONFLICT (symbol, date)
             DO UPDATE SET
                 sma_20 = EXCLUDED.sma_20, sma_50 = EXCLUDED.sma_50,
                 sma_200 = EXCLUDED.sma_200, ema_12 = EXCLUDED.ema_12,
                 ema_26 = EXCLUDED.ema_26, rsi_14 = EXCLUDED.rsi_14,
                 macd = EXCLUDED.macd, macd_signal = EXCLUDED.macd_signal,
+                macd_histogram = EXCLUDED.macd_histogram,
                 bollinger_upper = EXCLUDED.bollinger_upper,
                 bollinger_lower = EXCLUDED.bollinger_lower,
                 atr_14 = EXCLUDED.atr_14, adx_14 = EXCLUDED.adx_14,
                 obv = EXCLUDED.obv, support_level = EXCLUDED.support_level,
-                resistance_level = EXCLUDED.resistance_level
+                resistance_level = EXCLUDED.resistance_level,
+                ichimoku_tenkan = EXCLUDED.ichimoku_tenkan,
+                ichimoku_kijun = EXCLUDED.ichimoku_kijun,
+                ichimoku_senkou_a = EXCLUDED.ichimoku_senkou_a,
+                ichimoku_senkou_b = EXCLUDED.ichimoku_senkou_b,
+                stoch_k = EXCLUDED.stoch_k, stoch_d = EXCLUDED.stoch_d,
+                cci_20 = EXCLUDED.cci_20, williams_r = EXCLUDED.williams_r,
+                cmf = EXCLUDED.cmf
         """
-        
+
         count = 0
         async with self._pool.acquire() as conn:
             async with conn.transaction():
@@ -287,22 +299,26 @@ class TimeSeriesStore:
                         date_val = r.get("date")
                         if isinstance(date_val, str):
                             date_val = datetime.strptime(date_val, "%Y-%m-%d").date()
-                        
+
                         await conn.execute(
                             query,
                             r.get("symbol", ""),
                             date_val,
                             r.get("sma_20"), r.get("sma_50"), r.get("sma_200"),
                             r.get("ema_12"), r.get("ema_26"), r.get("rsi_14"),
-                            r.get("macd"), r.get("macd_signal"),
+                            r.get("macd"), r.get("macd_signal"), r.get("macd_histogram"),
                             r.get("bollinger_upper"), r.get("bollinger_lower"),
                             r.get("atr_14"), r.get("adx_14"), r.get("obv"),
                             r.get("support_level"), r.get("resistance_level"),
+                            r.get("ichimoku_tenkan"), r.get("ichimoku_kijun"),
+                            r.get("ichimoku_senkou_a"), r.get("ichimoku_senkou_b"),
+                            r.get("stoch_k"), r.get("stoch_d"),
+                            r.get("cci_20"), r.get("williams_r"), r.get("cmf"),
                         )
                         count += 1
                     except Exception as e:
                         logger.warning(f"Error upserting technicals for {r.get('symbol')}: {e}")
-        
+
         return count
     
     async def get_technicals(
@@ -343,33 +359,45 @@ class TimeSeriesStore:
     # ========================
     
     async def upsert_fundamentals(self, records: List[Dict[str, Any]]) -> int:
-        """Insert or update quarterly fundamental records."""
+        """Insert or update quarterly fundamental records (all 55 columns from schema)."""
         if not records:
             return 0
-        
-        query = """
+
+        # All columns matching fundamentals_quarterly schema
+        FUND_COLS = [
+            "revenue", "revenue_growth_yoy", "revenue_growth_qoq",
+            "operating_profit", "operating_margin", "gross_profit", "gross_margin",
+            "net_profit", "net_profit_margin", "eps", "eps_growth_yoy",
+            "interest_expense", "depreciation", "ebitda", "ebit",
+            "other_income", "tax_expense", "effective_tax_rate",
+            "total_assets", "total_equity", "total_debt", "long_term_debt",
+            "short_term_debt", "cash_and_equiv", "net_debt",
+            "current_assets", "current_liabilities", "inventory",
+            "receivables", "payables", "fixed_assets", "intangible_assets",
+            "reserves_and_surplus", "book_value_per_share", "contingent_liabilities",
+            "operating_cash_flow", "investing_cash_flow", "financing_cash_flow",
+            "capital_expenditure", "free_cash_flow", "dividends_paid",
+            "debt_repayment", "equity_raised",
+            "roe", "roa", "roic", "debt_to_equity", "interest_coverage",
+            "current_ratio", "quick_ratio", "asset_turnover",
+            "inventory_turnover", "receivables_turnover", "dividend_payout_ratio",
+            "earnings_surprise_pct", "analyst_rating_consensus",
+            "target_price_consensus", "num_analysts",
+            "revenue_5y_cagr", "eps_5y_cagr", "roe_5y_avg", "fcf_3y_avg",
+        ]
+
+        placeholders = ", ".join(f"${i}" for i in range(1, len(FUND_COLS) + 4))  # +3 for symbol, period_end, period_type
+        col_names = ", ".join(FUND_COLS)
+        set_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in FUND_COLS)
+
+        query = f"""
             INSERT INTO fundamentals_quarterly (
-                symbol, period_end, period_type, revenue, operating_profit,
-                operating_margin, net_profit, net_profit_margin, eps, ebitda,
-                total_assets, total_equity, total_debt, cash_and_equiv,
-                operating_cash_flow, free_cash_flow, roe, debt_to_equity,
-                interest_coverage, current_ratio
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                symbol, period_end, period_type, {col_names}
+            ) VALUES ({placeholders})
             ON CONFLICT (symbol, period_end, period_type)
-            DO UPDATE SET
-                revenue = EXCLUDED.revenue, operating_profit = EXCLUDED.operating_profit,
-                operating_margin = EXCLUDED.operating_margin, net_profit = EXCLUDED.net_profit,
-                net_profit_margin = EXCLUDED.net_profit_margin, eps = EXCLUDED.eps,
-                ebitda = EXCLUDED.ebitda, total_assets = EXCLUDED.total_assets,
-                total_equity = EXCLUDED.total_equity, total_debt = EXCLUDED.total_debt,
-                cash_and_equiv = EXCLUDED.cash_and_equiv,
-                operating_cash_flow = EXCLUDED.operating_cash_flow,
-                free_cash_flow = EXCLUDED.free_cash_flow, roe = EXCLUDED.roe,
-                debt_to_equity = EXCLUDED.debt_to_equity,
-                interest_coverage = EXCLUDED.interest_coverage,
-                current_ratio = EXCLUDED.current_ratio
+            DO UPDATE SET {set_clause}
         """
-        
+
         count = 0
         async with self._pool.acquire() as conn:
             async with conn.transaction():
@@ -378,26 +406,20 @@ class TimeSeriesStore:
                         period_end = r.get("period_end")
                         if isinstance(period_end, str):
                             period_end = datetime.strptime(period_end, "%Y-%m-%d").date()
-                        
-                        await conn.execute(
-                            query,
+
+                        params = [
                             r.get("symbol", ""),
                             period_end,
                             r.get("period_type", "quarterly"),
-                            r.get("revenue"), r.get("operating_profit"),
-                            r.get("operating_margin"), r.get("net_profit"),
-                            r.get("net_profit_margin"), r.get("eps"),
-                            r.get("ebitda"), r.get("total_assets"),
-                            r.get("total_equity"), r.get("total_debt"),
-                            r.get("cash_and_equiv"), r.get("operating_cash_flow"),
-                            r.get("free_cash_flow"), r.get("roe"),
-                            r.get("debt_to_equity"), r.get("interest_coverage"),
-                            r.get("current_ratio"),
-                        )
+                        ]
+                        for c in FUND_COLS:
+                            params.append(r.get(c))
+
+                        await conn.execute(query, *params)
                         count += 1
                     except Exception as e:
                         logger.warning(f"Error upserting fundamentals for {r.get('symbol')}: {e}")
-        
+
         return count
     
     async def get_fundamentals(
@@ -932,6 +954,145 @@ class TimeSeriesStore:
             return [dict(r) for r in rows]
 
     # ========================
+    # Intraday Metrics
+    # ========================
+
+    async def upsert_intraday_metrics(self, records: List[Dict[str, Any]]) -> int:
+        """Insert or update hourly/intraday metric records."""
+        if not records:
+            return 0
+
+        query = """
+            INSERT INTO intraday_metrics (
+                symbol, timestamp, rsi_hourly, macd_crossover_hourly,
+                vwap_intraday, advance_decline_ratio, sectoral_heatmap, india_vix
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8)
+            ON CONFLICT (symbol, timestamp) DO UPDATE SET
+                rsi_hourly = EXCLUDED.rsi_hourly,
+                macd_crossover_hourly = EXCLUDED.macd_crossover_hourly,
+                vwap_intraday = EXCLUDED.vwap_intraday,
+                advance_decline_ratio = EXCLUDED.advance_decline_ratio,
+                sectoral_heatmap = EXCLUDED.sectoral_heatmap,
+                india_vix = EXCLUDED.india_vix
+        """
+
+        count = 0
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for r in records:
+                    try:
+                        import json as _json
+                        ts = r.get("timestamp")
+                        if isinstance(ts, str):
+                            ts = datetime.fromisoformat(ts)
+                        if ts and ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+
+                        heatmap = r.get("sectoral_heatmap")
+                        if heatmap and not isinstance(heatmap, str):
+                            heatmap = _json.dumps(heatmap)
+
+                        await conn.execute(
+                            query,
+                            r.get("symbol", ""), ts,
+                            r.get("rsi_hourly"), r.get("macd_crossover_hourly"),
+                            r.get("vwap_intraday"), r.get("advance_decline_ratio"),
+                            heatmap, r.get("india_vix"),
+                        )
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Error upserting intraday for {r.get('symbol')}: {e}")
+        return count
+
+    async def get_intraday_metrics(
+        self, symbol: str,
+        start_ts: Optional[str] = None,
+        end_ts: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Get intraday metrics for a symbol with optional timestamp range."""
+        conditions = ["symbol = $1"]
+        params: list = [symbol]
+        idx = 2
+        if start_ts:
+            ts = datetime.fromisoformat(start_ts)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            conditions.append(f"timestamp >= ${idx}")
+            params.append(ts)
+            idx += 1
+        if end_ts:
+            ts = datetime.fromisoformat(end_ts)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            conditions.append(f"timestamp <= ${idx}")
+            params.append(ts)
+            idx += 1
+        where = " AND ".join(conditions)
+        query = f"SELECT * FROM intraday_metrics WHERE {where} ORDER BY timestamp DESC LIMIT {limit}"
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+            return [dict(r) for r in rows]
+
+    # ========================
+    # Weekly Metrics
+    # ========================
+
+    async def upsert_weekly_metrics(self, records: List[Dict[str, Any]]) -> int:
+        """Insert or update weekly metric records."""
+        if not records:
+            return 0
+
+        query = """
+            INSERT INTO weekly_metrics (
+                symbol, week_start, sma_weekly_crossover,
+                support_resistance_weekly, google_trends_score, job_postings_growth
+            ) VALUES ($1,$2,$3,$4::jsonb,$5,$6)
+            ON CONFLICT (symbol, week_start) DO UPDATE SET
+                sma_weekly_crossover = EXCLUDED.sma_weekly_crossover,
+                support_resistance_weekly = EXCLUDED.support_resistance_weekly,
+                google_trends_score = EXCLUDED.google_trends_score,
+                job_postings_growth = EXCLUDED.job_postings_growth
+        """
+
+        count = 0
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for r in records:
+                    try:
+                        import json as _json
+                        ws = r.get("week_start")
+                        if isinstance(ws, str):
+                            ws = datetime.strptime(ws, "%Y-%m-%d").date()
+
+                        sr = r.get("support_resistance_weekly")
+                        if sr and not isinstance(sr, str):
+                            sr = _json.dumps(sr)
+
+                        await conn.execute(
+                            query,
+                            r.get("symbol", ""), ws,
+                            r.get("sma_weekly_crossover"),
+                            sr, r.get("google_trends_score"),
+                            r.get("job_postings_growth"),
+                        )
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Error upserting weekly metrics for {r.get('symbol')}: {e}")
+        return count
+
+    async def get_weekly_metrics(
+        self, symbol: str, limit: int = 104,
+    ) -> List[Dict[str, Any]]:
+        """Get weekly metrics for a symbol (default 2 years)."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM weekly_metrics WHERE symbol = $1 ORDER BY week_start DESC LIMIT $2",
+                symbol, limit,
+            )
+            return [dict(r) for r in rows]
+
+    # ========================
     # Analytics Queries
     # ========================
     
@@ -975,17 +1136,42 @@ class TimeSeriesStore:
             "sma_20": "t.sma_20", "ema_12": "t.ema_12", "ema_26": "t.ema_26",
             "atr_14": "t.atr_14", "adx_14": "t.adx_14",
             "bollinger_upper": "t.bollinger_upper", "bollinger_lower": "t.bollinger_lower",
+            "stoch_k": "t.stoch_k", "stoch_d": "t.stoch_d",
+            "cci_20": "t.cci_20", "williams_r": "t.williams_r", "cmf": "t.cmf",
             # Fundamental columns (alias: f)
-            "roe": "f.roe", "debt_to_equity": "f.debt_to_equity",
+            "roe": "f.roe", "roa": "f.roa", "roic": "f.roic",
+            "debt_to_equity": "f.debt_to_equity",
             "eps": "f.eps", "revenue": "f.revenue",
             "net_profit": "f.net_profit", "operating_margin": "f.operating_margin",
             "net_profit_margin": "f.net_profit_margin", "current_ratio": "f.current_ratio",
-            "interest_coverage": "f.interest_coverage",
+            "quick_ratio": "f.quick_ratio", "interest_coverage": "f.interest_coverage",
             "free_cash_flow": "f.free_cash_flow", "operating_cash_flow": "f.operating_cash_flow",
+            "ebitda": "f.ebitda", "gross_margin": "f.gross_margin",
+            "dividend_payout_ratio": "f.dividend_payout_ratio",
             # Shareholding columns (alias: s)
             "promoter_holding": "s.promoter_holding", "fii_holding": "s.fii_holding",
             "dii_holding": "s.dii_holding", "public_holding": "s.public_holding",
             "promoter_pledging": "s.promoter_pledging",
+            # Derived metrics columns (alias: d)
+            "daily_return_pct": "d.daily_return_pct",
+            "return_5d_pct": "d.return_5d_pct", "return_20d_pct": "d.return_20d_pct",
+            "return_60d_pct": "d.return_60d_pct",
+            "week_52_high": "d.week_52_high", "week_52_low": "d.week_52_low",
+            "distance_from_52w_high": "d.distance_from_52w_high",
+            "volume_ratio": "d.volume_ratio",
+            # Valuation columns (alias: v)
+            "market_cap": "v.market_cap", "enterprise_value": "v.enterprise_value",
+            "pe_ratio": "v.pe_ratio", "pe_ratio_forward": "v.pe_ratio_forward",
+            "peg_ratio": "v.peg_ratio", "pb_ratio": "v.pb_ratio",
+            "ps_ratio": "v.ps_ratio", "ev_to_ebitda": "v.ev_to_ebitda",
+            "ev_to_sales": "v.ev_to_sales", "dividend_yield": "v.dividend_yield",
+            "fcf_yield": "v.fcf_yield", "earnings_yield": "v.earnings_yield",
+            # Risk metrics columns (alias: r)
+            "beta_1y": "r.beta_1y", "beta_3y": "r.beta_3y",
+            "max_drawdown_1y": "r.max_drawdown_1y",
+            "sharpe_ratio_1y": "r.sharpe_ratio_1y",
+            "sortino_ratio_1y": "r.sortino_ratio_1y",
+            "rolling_volatility_30d": "r.rolling_volatility_30d",
         }
 
         if symbols:
@@ -1047,16 +1233,17 @@ class TimeSeriesStore:
                 SELECT DISTINCT ON (symbol)
                     symbol, sma_20, sma_50, sma_200, ema_12, ema_26,
                     rsi_14, macd, macd_signal, bollinger_upper, bollinger_lower,
-                    atr_14, adx_14
+                    atr_14, adx_14, stoch_k, stoch_d, cci_20, williams_r, cmf
                 FROM technical_indicators
                 ORDER BY symbol, date DESC
             ),
             latest_fund AS (
                 SELECT DISTINCT ON (symbol)
                     symbol, revenue, operating_profit, operating_margin,
-                    net_profit, net_profit_margin, eps, roe, debt_to_equity,
-                    interest_coverage, current_ratio, free_cash_flow,
-                    operating_cash_flow
+                    gross_margin, net_profit, net_profit_margin, eps,
+                    ebitda, roe, roa, roic, debt_to_equity,
+                    interest_coverage, current_ratio, quick_ratio,
+                    free_cash_flow, operating_cash_flow, dividend_payout_ratio
                 FROM fundamentals_quarterly
                 WHERE period_type = 'quarterly'
                 ORDER BY symbol, period_end DESC
@@ -1067,21 +1254,58 @@ class TimeSeriesStore:
                     fii_holding, dii_holding, public_holding
                 FROM shareholding_quarterly
                 ORDER BY symbol, quarter_end DESC
+            ),
+            latest_derived AS (
+                SELECT DISTINCT ON (symbol)
+                    symbol, daily_return_pct, return_5d_pct, return_20d_pct,
+                    return_60d_pct, week_52_high, week_52_low,
+                    distance_from_52w_high, volume_ratio
+                FROM derived_metrics_daily
+                ORDER BY symbol, date DESC
+            ),
+            latest_val AS (
+                SELECT DISTINCT ON (symbol)
+                    symbol, market_cap, enterprise_value, pe_ratio, pe_ratio_forward,
+                    peg_ratio, pb_ratio, ps_ratio, ev_to_ebitda, ev_to_sales,
+                    dividend_yield, fcf_yield, earnings_yield
+                FROM valuation_daily
+                ORDER BY symbol, date DESC
+            ),
+            latest_risk AS (
+                SELECT DISTINCT ON (symbol)
+                    symbol, beta_1y, beta_3y, max_drawdown_1y,
+                    sharpe_ratio_1y, sortino_ratio_1y, rolling_volatility_30d
+                FROM risk_metrics
+                ORDER BY symbol, date DESC
             )
             SELECT
                 p.symbol, p.date, p.close, p.volume, p.prev_close,
                 t.rsi_14, t.sma_20, t.sma_50, t.sma_200,
                 t.ema_12, t.ema_26, t.macd, t.macd_signal,
                 t.bollinger_upper, t.bollinger_lower, t.atr_14, t.adx_14,
-                f.revenue, f.operating_margin, f.net_profit, f.net_profit_margin,
-                f.eps, f.roe, f.debt_to_equity, f.interest_coverage,
-                f.current_ratio, f.free_cash_flow, f.operating_cash_flow,
+                t.stoch_k, t.stoch_d, t.cci_20, t.williams_r, t.cmf,
+                f.revenue, f.operating_margin, f.gross_margin,
+                f.net_profit, f.net_profit_margin,
+                f.eps, f.ebitda, f.roe, f.roa, f.roic, f.debt_to_equity,
+                f.interest_coverage, f.current_ratio, f.quick_ratio,
+                f.free_cash_flow, f.operating_cash_flow, f.dividend_payout_ratio,
                 s.promoter_holding, s.promoter_pledging,
-                s.fii_holding, s.dii_holding, s.public_holding
+                s.fii_holding, s.dii_holding, s.public_holding,
+                d.daily_return_pct, d.return_5d_pct, d.return_20d_pct,
+                d.return_60d_pct, d.week_52_high, d.week_52_low,
+                d.distance_from_52w_high, d.volume_ratio,
+                v.market_cap, v.enterprise_value, v.pe_ratio, v.pe_ratio_forward,
+                v.peg_ratio, v.pb_ratio, v.ps_ratio, v.ev_to_ebitda,
+                v.ev_to_sales, v.dividend_yield, v.fcf_yield, v.earnings_yield,
+                r.beta_1y, r.beta_3y, r.max_drawdown_1y,
+                r.sharpe_ratio_1y, r.sortino_ratio_1y, r.rolling_volatility_30d
             FROM latest_prices p
             LEFT JOIN latest_tech t ON p.symbol = t.symbol
             LEFT JOIN latest_fund f ON p.symbol = f.symbol
             LEFT JOIN latest_share s ON p.symbol = s.symbol
+            LEFT JOIN latest_derived d ON p.symbol = d.symbol
+            LEFT JOIN latest_val v ON p.symbol = v.symbol
+            LEFT JOIN latest_risk r ON p.symbol = r.symbol
             {where}
             ORDER BY {sort_col} {sort_dir} NULLS LAST
             LIMIT {limit}
@@ -1100,7 +1324,7 @@ class TimeSeriesStore:
                 "ml_features_daily", "risk_metrics", "valuation_daily",
                 "fundamentals_quarterly", "shareholding_quarterly",
                 "corporate_actions", "macro_indicators", "derivatives_daily",
-                "intraday_metrics", "weekly_metrics",
+                "intraday_metrics", "weekly_metrics", "schema_migrations",
             ]:
                 row_count = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")
                 size = await conn.fetchval(

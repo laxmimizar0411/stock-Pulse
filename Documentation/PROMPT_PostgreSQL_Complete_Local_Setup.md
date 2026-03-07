@@ -1,103 +1,304 @@
-# AI Prompt: Complete PostgreSQL for StockPulse (Local Setup, 100% Operational)
+# PostgreSQL for StockPulse — Complete Local Setup Reference
 
-Use this prompt to have an AI (or yourself) complete all remaining work so that **PostgreSQL is 100% ready and fully operational** for the StockPulse website, with **Postgres running locally** on the developer's machine.
+> **Last Updated:** March 7, 2026
+> **Status:** Fully implemented — 14 tables, 40+ indexes, 14 REST endpoints, extended pipeline, derived metrics job, PG Control UI
 
 ---
 
 ## 1. Context
 
-- **Project:** StockPulse — Indian stock analysis platform (NSE/BSE). Backend: FastAPI (Python). Frontend: React. Other stores: MongoDB (primary entity store), Redis (cache).
-- **PostgreSQL role:** Time-series and analytics layer only. It stores:
-  - Daily OHLCV prices (+ delivery, VWAP, etc.)
-  - Daily technical indicators (SMA, RSI, MACD, etc.)
-  - Quarterly fundamentals (revenue, profit, ratios)
-  - Quarterly shareholding (promoter, FII, DII)
-- **Goal:** Local Postgres instance; all tables created; app connects at startup; data flows in from (1) NSE Bhavcopy API and (2) Groww pipeline; screener and time-series APIs use Postgres; health and dashboard show Postgres status. No cloud or paid services — local only.
+- **Project:** StockPulse — Indian stock analysis platform (NSE/BSE). Backend: FastAPI (Python). Frontend: React 19. Other stores: MongoDB (entity/document), Redis (cache).
+- **PostgreSQL role:** Time-series and analytics layer. It stores 270+ fields across 14 tables covering:
+  - Daily OHLCV prices (+ delivery, VWAP)
+  - Derived metrics (returns, 52-week high/low, volume ratios)
+  - Technical indicators (SMA, RSI, MACD, Ichimoku, Stochastic, CCI, etc.)
+  - ML features (predicted scores, anomaly flags)
+  - Risk metrics (VaR, beta, Sharpe, max drawdown)
+  - Valuation (P/E, P/B, EV/EBITDA, dividend yield, PEG)
+  - Quarterly fundamentals (55+ columns: revenue, profit, balance sheet, cash flow, ratios)
+  - Quarterly shareholding (promoter, FII, DII, MF, insurance)
+  - Corporate actions (dividends, splits, bonuses, rights)
+  - Macro indicators (repo rate, GDP, CPI, USD/INR)
+  - Derivatives (futures OI, options chain, put-call ratio, IV)
+  - Intraday metrics (VWAP, tick count, JSONB bid/ask snapshots)
+  - Weekly metrics (SMA crossover, JSONB support/resistance, sectoral heatmap)
+  - Schema migrations (version tracking)
+- **Goal:** Local Postgres instance; all 14 tables created; app connects at startup; data flows in from Bhavcopy, Groww pipeline, and derivation jobs; screener uses 7-table JOIN; 14 REST endpoints serve all tables; PG Control UI provides ON/OFF toggle and resource monitoring.
 
 ---
 
-## 2. What Already Exists (Do Not Duplicate)
+## 2. Architecture
 
-- **Schema (SQL):** In `backend/setup_databases.py`, constant `POSTGRESQL_SCHEMA` defines four tables:
-  - `prices_daily` — symbol, date (PK), open, high, low, close, last, prev_close, volume, turnover, total_trades, delivery_qty, delivery_pct, vwap, isin, series, created_at. Indexes on (date DESC), (symbol, date DESC).
-  - `technical_indicators` — symbol, date (PK), sma_20/50/200, ema_12/26, rsi_14, macd, macd_signal, bollinger_upper/lower, atr_14, adx_14, obv, support_level, resistance_level, created_at. Indexes on (date DESC), (symbol, date DESC).
-  - `fundamentals_quarterly` — symbol, period_end, period_type (PK), revenue, operating_profit, operating_margin, net_profit, net_profit_margin, eps, ebitda, total_assets, total_equity, total_debt, cash_and_equiv, operating_cash_flow, free_cash_flow, roe, debt_to_equity, interest_coverage, current_ratio, created_at. Indexes on period_end, (symbol, period_end), (period_type, period_end).
-  - `shareholding_quarterly` — symbol, quarter_end (PK), promoter_holding, promoter_pledging, fii_holding, dii_holding, public_holding, promoter_holding_change, fii_holding_change, num_shareholders, mf_holding, insurance_holding, created_at. Indexes on quarter_end, (symbol, quarter_end).
-- **Setup script:** `setup_databases.py` has `setup_postgresql()`: connects using `TIMESERIES_DSN`, optionally creates the database if missing, runs `POSTGRESQL_SCHEMA`, verifies tables and indexes. Optional: if TimescaleDB extension is present, converts `prices_daily` and `technical_indicators` to hypertables and adds compression policies. Use: `python setup_databases.py --postgres` (or `--check` for verify-only).
-- **TimeSeriesStore (`backend/services/timeseries_store.py`):** Async class using `asyncpg`. Methods: `initialize()` (pool + verify tables), `close()`, `upsert_prices`, `get_prices`, `get_latest_price_date`, `get_price_count`, `get_weekly_prices`, `get_monthly_prices`, `upsert_technicals`, `get_technicals`, `upsert_fundamentals`, `get_fundamentals`, `upsert_shareholding`, `get_shareholding`, `get_screener_data` (4-table JOIN with COLUMN_MAP for filters), `get_stats`. Module-level `init_timeseries_store(dsn)` and `get_timeseries_store()`.
-- **Server (`backend/server.py`):** Reads `TIMESERIES_DSN` from env, sets `_ts_store = None`. On startup, calls `_ts_store = await init_timeseries_store(timeseries_dsn)`. Endpoints: `GET /api/database/health` (includes Postgres status and table stats when `_ts_store` is initialized), `GET /api/timeseries/stats`, `GET /api/timeseries/prices/{symbol}` (query params: start_date, end_date, limit), `POST /api/screener` (tries `_ts_store.get_screener_data()` first, then fallback to in-memory). Bhavcopy download endpoint writes to Postgres via `_ts_store.upsert_prices(records)`. Shutdown closes `_ts_store`.
-- **Pipeline service (`backend/services/pipeline_service.py`):** Accepts optional `ts_store: TimeSeriesStore`. After a run, calls `_persist_to_timeseries(job.results)`, which builds price/technical/fundamental/shareholding records from the Groww API result dict and calls `ts_store.upsert_prices`, `upsert_technicals`, `upsert_fundamentals`, `upsert_shareholding` as needed. Pipeline is initialized with `ts_store=_ts_store` in server startup.
-- **Env:** `backend/.env.example` has `TIMESERIES_DSN=postgresql://localhost:5432/stockpulse_ts`. Backend expects `TIMESERIES_DSN` in `.env`.
-- **Tests:** `backend/test_pipeline.py` has `--db-only` mode that checks Postgres (and Mongo, Redis); expects the four tables. Can use `TIMESERIES_DSN` from env.
-- **Dashboard:** Database Dashboard service and routes use `ts_store` for table listing and stats when available.
+### 14 PostgreSQL Tables
 
----
+| # | Table | PK | Key Columns | Source |
+|---|-------|----|-------------|--------|
+| 1 | `prices_daily` | (symbol, date) | OHLCV, delivery, VWAP, 17 cols | Bhavcopy, Groww |
+| 2 | `derived_metrics_daily` | (symbol, date) | daily_return, 5/20/60d returns, 52w high/low, volume_ratio | Derivation job |
+| 3 | `technical_indicators` | (symbol, date) | SMA, EMA, RSI, MACD, Bollinger, ATR, ADX, OBV, Ichimoku, Stochastic, CCI, Williams %R, CMF — 27 cols | Pipeline, pandas-ta |
+| 4 | `ml_features_daily` | (symbol, date) | predicted_score, anomaly flags, feature vectors | ML jobs |
+| 5 | `risk_metrics` | (symbol, date) | var_95, beta, alpha, sharpe, sortino, max_drawdown, volatility | Risk job |
+| 6 | `valuation_daily` | (symbol, date) | pe, pb, ps, ev_ebitda, dividend_yield, peg, mcap, enterprise_value | Pipeline |
+| 7 | `fundamentals_quarterly` | (symbol, period_end, period_type) | 55+ cols: revenue, profit, margins, EPS, balance sheet, cash flow, ratios | Pipeline |
+| 8 | `shareholding_quarterly` | (symbol, quarter_end) | promoter, FII, DII, public, pledging, MF, insurance — 11 cols | Pipeline |
+| 9 | `corporate_actions` | (symbol, ex_date, action_type) | dividend_amount, split ratio, bonus ratio, record_date | Pipeline |
+| 10 | `macro_indicators` | (indicator_name, date) | value, previous_value, unit, source | Macro job |
+| 11 | `derivatives_daily` | (symbol, date) | futures_oi, options_oi, pcr, iv, max_pain, rollover_pct | Derivatives job |
+| 12 | `intraday_metrics` | (symbol, timestamp) | vwap_intraday, tick_count, JSONB bid_ask_snapshot | Intraday job |
+| 13 | `weekly_metrics` | (symbol, week_start) | sma_weekly_crossover, JSONB support_resistance/sectoral_heatmap | Derivation job |
+| 14 | `schema_migrations` | (version) | applied_at, description | Setup script |
 
-## 3. What Must Be Done (Gaps and Completion Criteria)
+### Schema Source of Truth
 
-- **Local Postgres install and database:**
-  - Ensure PostgreSQL (e.g. 14+) is installed and running on the machine (e.g. `brew install postgresql` and `brew services start postgresql` on macOS, or equivalent).
-  - Ensure a database exists for the app (e.g. `createdb stockpulse_ts`), or document that `setup_databases.py` can create it if the user connects to default `postgres` and DSN points to `stockpulse_ts`.
-- **Configuration:**
-  - Document or ensure `backend/.env` contains `TIMESERIES_DSN=postgresql://localhost:5432/stockpulse_ts` (or the correct port/user if not default). No cloud URLs — local only.
-- **Schema and tables:**
-  - Ensure the four tables (and only these, unless explicitly extending) are created by running `python setup_databases.py --postgres` from `backend/`. No table creation in `TimeSeriesStore.initialize()` — that only checks tables exist.
-- **Connection and startup:**
-  - App must call `init_timeseries_store(timeseries_dsn)` at startup and set the global `_ts_store`. If Postgres is unreachable, the app should log a warning and continue (no crash); `/api/database/health` will show Postgres as not_initialized or error. No requirement for fail-fast on Postgres for this local setup.
-- **Data ingestion:**
-  - **Bhavcopy:** The endpoint that downloads NSE Bhavcopy and calls `_ts_store.upsert_prices(records)` must receive records in the shape expected by `upsert_prices` (symbol, date, open, high, low, close, last, prev_close, volume, turnover, total_trades, delivery_qty/delivery_quantity, delivery_pct/delivery_percentage, vwap, isin, series). Ensure the Bhavcopy-to-record mapping fills these (or defaults) so inserts succeed.
-  - **Groww pipeline:** When pipeline runs and `ts_store` is set, `_persist_to_timeseries` must run and map Groww response fields to the same shapes expected by `upsert_prices`, `upsert_technicals`, `upsert_fundamentals`, `upsert_shareholding`. Fix any missing or wrongly named fields so that no runtime errors occur and data appears in the four tables.
-- **Screener:**
-  - `get_screener_data` uses a 4-table JOIN (latest_prices, latest_tech, latest_fund, latest_share) with LEFT JOINs so that missing technicals/fundamentals/shareholding do not drop rows. Ensure the API path for screener uses this when `_ts_store` is initialized and returns `source: "postgresql"` when results come from Postgres. Fallback to in-memory when `_ts_store` is None or query fails.
-- **Time-series API:**
-  - `GET /api/timeseries/prices/{symbol}` must return data from `prices_daily` when Postgres is available (start_date, end_date, limit). Frontend or docs may assume this powers charts; ensure the response shape is consistent.
-- **Health and stats:**
-  - `GET /api/database/health` must include a `postgresql` section: when connected, status "connected" and table names with row counts (or sizes); when not connected, status "not_initialized" or "error" with a short message. `GET /api/timeseries/stats` must return table stats and pool info when store is initialized.
-- **Optional — weekly/monthly aggregates:**
-  - `get_weekly_prices` and `get_monthly_prices` in TimeSeriesStore query `prices_weekly` and `prices_monthly`. These are not in the standard schema; they are TimescaleDB continuous aggregates. For 100% local vanilla Postgres, either (a) implement fallbacks that aggregate from `prices_daily` (e.g. GROUP BY week/month) so the methods never fail and return data, or (b) clearly document that weekly/monthly require TimescaleDB and leave the methods returning empty list when views are absent. Prefer (a) for “100% operational” without TimescaleDB.
-- **Optional — TimescaleDB:**
-  - If the user later installs TimescaleDB, `setup_databases.py` already has logic to create hypertables and compression for `prices_daily` and `technical_indicators`. No change required for “100% complete” if staying vanilla Postgres; only ensure that path does not break when the extension is missing.
-- **Documentation / runbook:**
-  - Add or update a short runbook or section (e.g. in DEVELOPMENT_HISTORY or a dedicated one-paragraph note) that states: (1) Install and start Postgres locally, (2) Create database `stockpulse_ts` (or rely on setup script), (3) Set `TIMESERIES_DSN` in `backend/.env`, (4) Run `python setup_databases.py --postgres`, (5) Start the backend and verify `GET /api/database/health` shows Postgres connected. Optionally: run `python test_pipeline.py --db-only` and one Bhavcopy download to confirm writes.
+`backend/setup_databases.py` — constant `POSTGRESQL_SCHEMA` defines all 14 tables with 40+ indexes. Run:
+```bash
+cd backend
+python setup_databases.py --postgres        # Create tables and indexes
+python setup_databases.py --check           # Verify-only (expects 14 tables)
+```
 
 ---
 
-## 4. Definition of “100% Complete and Operational” (Local Postgres)
+## 3. Data Access Layer — TimeSeriesStore
 
-- Postgres is installed and running locally; database `stockpulse_ts` exists; `TIMESERIES_DSN` is set in `backend/.env`.
-- Running `python setup_databases.py --postgres` creates the four tables and indexes without errors.
-- Backend starts without crashing; `_ts_store` is initialized when Postgres is reachable; health endpoint shows `postgresql.status: "connected"` and the four tables with counts/sizes.
-- Bhavcopy download endpoint successfully writes to `prices_daily`; `GET /api/timeseries/prices/{symbol}` returns stored data when present.
-- When the Groww pipeline runs with `ts_store` set, price/technical/fundamental/shareholding data are persisted to the four tables without errors.
-- Screener endpoint uses Postgres when available and returns results with `source: "postgresql"`; fallback to in-memory when Postgres is unavailable.
-- Optional: weekly/monthly price APIs work either via aggregation from `prices_daily` or are clearly documented as TimescaleDB-only.
-- No new features are required beyond the above; no cloud or paid Postgres; everything runs locally.
+**File:** `backend/services/timeseries_store.py`
+
+Async class using `asyncpg` with connection pooling (min_size=2, max_size=10).
+
+### Upsert Methods (12)
+All use `ON CONFLICT DO UPDATE` pattern:
+
+| Method | Target Table |
+|--------|-------------|
+| `upsert_prices(records)` | prices_daily |
+| `upsert_technicals(records)` | technical_indicators (all 27 cols) |
+| `upsert_fundamentals(records)` | fundamentals_quarterly (dynamic 55+ cols via FUND_COLS) |
+| `upsert_shareholding(records)` | shareholding_quarterly |
+| `upsert_derived_metrics(records)` | derived_metrics_daily |
+| `upsert_valuation(records)` | valuation_daily |
+| `upsert_ml_features(records)` | ml_features_daily |
+| `upsert_risk_metrics(records)` | risk_metrics |
+| `upsert_macro_indicators(records)` | macro_indicators |
+| `upsert_derivatives(records)` | derivatives_daily |
+| `upsert_intraday_metrics(records)` | intraday_metrics (TIMESTAMPTZ, JSONB) |
+| `upsert_weekly_metrics(records)` | weekly_metrics (JSONB support) |
+
+### Query Methods (17+)
+| Method | Description |
+|--------|-------------|
+| `get_prices(symbol, limit)` | Daily OHLCV |
+| `get_latest_price_date(symbol)` | Most recent date |
+| `get_price_count(symbol)` | Row count |
+| `get_weekly_prices(symbol, limit)` | Aggregated from prices_daily |
+| `get_monthly_prices(symbol, limit)` | Aggregated from prices_daily |
+| `get_technicals(symbol, limit)` | Technical indicators |
+| `get_fundamentals(symbol, period_type)` | Quarterly fundamentals |
+| `get_shareholding(symbol, limit)` | Shareholding data |
+| `get_derived_metrics(symbol, limit)` | Derived daily metrics |
+| `get_valuation(symbol, limit)` | Valuation ratios |
+| `get_ml_features(symbol, limit)` | ML feature vectors |
+| `get_risk_metrics(symbol, limit)` | Risk/volatility metrics |
+| `get_corporate_actions(symbol)` | Corporate actions |
+| `get_macro_indicators(name)` | Macro economic data |
+| `get_derivatives(symbol, limit)` | Derivatives data |
+| `get_intraday_metrics(symbol, start_ts, end_ts)` | Intraday with TIMESTAMPTZ |
+| `get_weekly_metrics(symbol, limit)` | Weekly aggregates |
+| `get_screener_data(filters, sort, limit)` | 7-table JOIN with COLUMN_MAP |
+| `get_stats()` | Row counts for all 14 tables |
+
+### Screener — 7-Table JOIN
+The screener CTE now joins:
+1. `latest_prices` — DISTINCT ON (symbol) from prices_daily
+2. `latest_tech` — from technical_indicators
+3. `latest_fund` — from fundamentals_quarterly
+4. `latest_share` — from shareholding_quarterly
+5. `latest_derived` — from derived_metrics_daily
+6. `latest_val` — from valuation_daily
+7. `latest_risk` — from risk_metrics
+
+`COLUMN_MAP` maps ~50+ filter/sort keys to qualified SQL columns across all 7 tables.
 
 ---
 
-## 5. Files to Touch (Checklist)
+## 4. Pipeline Persistence
 
-- `backend/.env.example` — ensure `TIMESERIES_DSN` is documented for local only (e.g. `postgresql://localhost:5432/stockpulse_ts`).
-- `backend/setup_databases.py` — already has schema and optional TimescaleDB; only fix if something is wrong (e.g. DB creation with special characters, or connection string for local).
-- `backend/services/timeseries_store.py` — ensure `initialize()` does not create tables (only verify); fix `get_weekly_prices` / `get_monthly_prices` to work without TimescaleDB (aggregate from `prices_daily`) or document that they require it.
-- `backend/server.py` — ensure startup calls `init_timeseries_store(timeseries_dsn)` and assigns `_ts_store`; ensure Bhavcopy and screener and timeseries endpoints use `_ts_store` as described; ensure health and shutdown use `_ts_store`.
-- `backend/services/pipeline_service.py` — ensure `_persist_to_timeseries` builds records that match the column names and types expected by `upsert_prices`, `upsert_technicals`, `upsert_fundamentals`, `upsert_shareholding` (e.g. date vs period_end vs quarter_end, and numeric nulls).
-- `backend/test_pipeline.py` — ensure `--db-only` checks Postgres and the four tables; use `TIMESERIES_DSN` from env.
-- Any short runbook or README section that explains the five-step local Postgres setup (install, create DB, set DSN, run setup script, start app and verify health).
+**File:** `backend/services/pipeline_service.py`
 
----
+`_persist_to_timeseries(results)` builds records for 9 table categories from Groww pipeline output:
 
-## 6. Out of Scope for This Prompt
+1. **prices** — OHLCV + delivery + VWAP fields
+2. **technicals** — All 25+ indicator fields (SMA, RSI, MACD, Ichimoku, Stochastic, CCI, etc.)
+3. **fundamentals** — All 60+ cols (revenue, profit, margins, EPS, balance sheet, cash flow, ratios)
+4. **shareholding** — Promoter, FII, DII, pledging
+5. **valuation** — P/E, P/B, EV/EBITDA, dividend yield, PEG, market cap
+6. **derived_metrics** — Daily returns, 52-week high/low (when present in data)
+7. **ml_features** — ML scores and anomaly flags (when present)
+8. **risk_metrics** — VaR, beta, Sharpe, volatility (when present)
+9. **corporate_actions** — Dividends, splits, bonuses (when present)
 
-- Cloud or hosted Postgres (Supabase, Aiven, etc.); only local.
-- Changing the four-table schema (e.g. adding new tables or columns) unless necessary to fix persistence or screener.
-- MongoDB or Redis setup.
-- Frontend UI changes beyond what is needed to display Postgres-backed screener or time-series data.
-- Authentication or authorization for the API.
-- TimescaleDB installation or tuning; optional and already partially handled in setup script.
+Each category only writes when its detection fields are found in the pipeline data. Macro indicators, derivatives, intraday, and weekly metrics are filled by separate jobs.
 
 ---
 
-## 7. Summary for the AI
+## 5. Derived Data Computation Job
 
-You are to make PostgreSQL **fully operational locally** for StockPulse: correct env and setup steps, tables created via the existing script, app connecting at startup, Bhavcopy and Groww pipeline writing to the four tables, screener and time-series APIs reading from Postgres, health endpoint reflecting status. Fix any bugs in mapping or connection that prevent this. Optionally add weekly/monthly aggregation from `prices_daily` so those APIs work without TimescaleDB. Add minimal documentation so a developer can install Postgres, create the DB, set `TIMESERIES_DSN`, run the setup script, and confirm everything via health and one or two API calls. Do not add cloud Postgres or new major features; keep scope to “local Postgres 100% complete and operational.”
+**File:** `backend/jobs/derive_metrics.py`
+
+Standalone job that reads `prices_daily` and computes derived fields:
+
+### `compute_derived_metrics(ts_store, symbols, lookback_days=260)`
+Computes for each symbol:
+- `daily_return_pct` — (close - prev_close) / prev_close × 100
+- `return_5d_pct`, `return_20d_pct`, `return_60d_pct` — rolling N-day returns
+- `day_range_pct` — (high - low) / low × 100
+- `gap_percentage` — (open - prev_close) / prev_close × 100
+- `week_52_high`, `week_52_low` — rolling 252-day max/min
+- `distance_from_52w_high` — percentage from 52-week high
+- `avg_volume_20d`, `volume_ratio` — 20-day average volume and ratio
+
+### `compute_weekly_metrics(ts_store, symbols, weeks=104)`
+- Groups prices by ISO week
+- `sma_weekly_crossover` — whether SMA50 > SMA200 at end of week
+
+### CLI Usage
+```bash
+cd backend
+python -m jobs.derive_metrics                    # All symbols
+python -m jobs.derive_metrics --symbols TCS,INFY # Specific symbols
+python -m jobs.derive_metrics --weekly           # Also compute weekly metrics
+```
+
+Can also be called programmatically:
+```python
+from jobs.derive_metrics import compute_derived_metrics
+await compute_derived_metrics(ts_store)
+```
+
+---
+
+## 6. REST API Endpoints
+
+### Time-Series Data (14 endpoints)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/timeseries/stats` | GET | Row counts and pool stats for all 14 tables |
+| `/api/timeseries/prices/{symbol}` | GET | Daily OHLCV (params: start_date, end_date, limit) |
+| `/api/timeseries/derived-metrics/{symbol}` | GET | Derived daily metrics (params: limit) |
+| `/api/timeseries/technicals/{symbol}` | GET | Technical indicators (params: limit) |
+| `/api/timeseries/fundamentals/{symbol}` | GET | Quarterly fundamentals (params: period_type) |
+| `/api/timeseries/shareholding/{symbol}` | GET | Shareholding data (params: limit) |
+| `/api/timeseries/valuation/{symbol}` | GET | Valuation ratios (params: limit) |
+| `/api/timeseries/ml-features/{symbol}` | GET | ML features (params: limit) |
+| `/api/timeseries/risk-metrics/{symbol}` | GET | Risk metrics (params: limit) |
+| `/api/timeseries/corporate-actions/{symbol}` | GET | Corporate actions |
+| `/api/timeseries/macro-indicators` | GET | Macro indicators (params: indicator_name) |
+| `/api/timeseries/derivatives/{symbol}` | GET | Derivatives data (params: limit) |
+| `/api/timeseries/intraday/{symbol}` | GET | Intraday metrics (params: start_ts, end_ts) |
+| `/api/timeseries/weekly-metrics/{symbol}` | GET | Weekly metrics (params: limit) |
+
+All return: `{"symbol": "...", "count": N, "data": [...]}` or HTTP 503 if `_ts_store` is None.
+
+### PostgreSQL Control (4 endpoints)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/database/postgres-control/status` | GET | Running state, version, uptime |
+| `/api/database/postgres-control/toggle` | POST | Start/stop Postgres (body: `{action: "start"\|"stop"}`) |
+| `/api/database/postgres-control/resources` | GET | CPU, RAM, storage (per-table), connections, pool stats |
+| `/api/database/postgres-control/health` | GET | Quick health check |
+
+### Screener
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/screener` | POST | 7-table JOIN screener with ~50 filter/sort keys |
+
+---
+
+## 7. Frontend — PG Control UI
+
+**File:** `frontend/src/pages/PostgresControl.jsx`
+**Route:** `/pg-control`
+
+Features:
+- Power toggle with confirmation dialog for stop
+- Resource overview cards: CPU, RAM, Storage, Active Connections (with progress bars)
+- **Storage tab:** Per-table breakdown (row count, data size, index size, usage %)
+- **Connections tab:** By-state and by-database breakdown
+- **Pool tab:** asyncpg connection pool stats
+- Schema info card listing all 14 tables
+- Auto-refresh every 10 seconds with toggle
+
+**Supporting files:**
+- `frontend/src/components/Layout.jsx` — Nav item with HardDrive icon
+- `frontend/src/App.js` — Route `/pg-control`
+- `frontend/src/lib/api.js` — `getPostgresStatus()`, `togglePostgres()`, `getPostgresResources()`, `getPostgresHealth()`
+
+---
+
+## 8. Quick Start (Local Setup)
+
+```bash
+# 1. Install PostgreSQL (14+)
+# macOS: brew install postgresql && brew services start postgresql
+# Ubuntu: sudo apt install postgresql && sudo systemctl start postgresql
+
+# 2. Create the database
+createdb stockpulse_ts
+
+# 3. Set DSN in backend/.env
+echo 'TIMESERIES_DSN=postgresql://localhost:5432/stockpulse_ts' >> backend/.env
+
+# 4. Create all 14 tables and 40+ indexes
+cd backend
+python setup_databases.py --postgres
+
+# 5. Verify
+python setup_databases.py --check
+python test_pipeline.py --db-only
+
+# 6. Start the backend
+uvicorn server:app --port 8001
+
+# 7. Verify via API
+curl http://localhost:8001/api/database/health
+curl http://localhost:8001/api/timeseries/stats
+curl http://localhost:8001/api/database/postgres-control/status
+
+# 8. (Optional) Run derived metrics after loading price data
+python -m jobs.derive_metrics
+python -m jobs.derive_metrics --weekly
+```
+
+---
+
+## 9. Files Reference
+
+| File | Purpose |
+|------|---------|
+| `backend/setup_databases.py` | Schema definition (14 tables, 40+ indexes) and setup script |
+| `backend/services/timeseries_store.py` | Async data access layer (12 upsert, 17+ query methods) |
+| `backend/services/pipeline_service.py` | Pipeline persistence to 9 table categories |
+| `backend/services/pg_control_service.py` | PG start/stop/resource monitoring service |
+| `backend/services/db_dashboard_service.py` | Dashboard metadata for all 14 tables |
+| `backend/routes/pg_control.py` | REST routes for PG control |
+| `backend/jobs/__init__.py` | Jobs package init |
+| `backend/jobs/derive_metrics.py` | Derived metrics computation job |
+| `backend/server.py` | FastAPI app with all endpoints |
+| `backend/test_pipeline.py` | Integration tests (expects 14 tables) |
+| `frontend/src/pages/PostgresControl.jsx` | PG Control UI |
+| `frontend/src/lib/api.js` | API client (PG control functions) |
+
+---
+
+## 10. Definition of "100% Complete and Operational"
+
+- Postgres running locally; database `stockpulse_ts` exists; `TIMESERIES_DSN` set in `backend/.env`
+- `python setup_databases.py --postgres` creates all 14 tables and 40+ indexes without errors
+- Backend starts; `_ts_store` initialized; health endpoint shows `postgresql.status: "connected"` with 14 tables
+- Bhavcopy writes to `prices_daily`; Groww pipeline persists to 9 table categories
+- Screener uses 7-table JOIN with ~50 filter/sort keys; falls back to in-memory when PG unavailable
+- 14 REST endpoints serve all time-series tables
+- PG Control UI provides start/stop toggle and resource monitoring
+- Derivation job computes daily returns, 52-week metrics, volume ratios, and weekly SMA crossovers
+- `test_pipeline.py --db-only` passes with all 14 tables verified

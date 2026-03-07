@@ -581,8 +581,11 @@ class DataPipelineService:
         """
         Persist extracted data to PostgreSQL time-series tables.
 
-        Extracts price, technical, fundamental, and shareholding data
-        from Groww API results and upserts them into PostgreSQL.
+        Builds records for all applicable tables from pipeline results:
+        - prices_daily, technical_indicators, fundamentals_quarterly, shareholding_quarterly
+        - valuation_daily, derived_metrics_daily, ml_features_daily, risk_metrics
+        - corporate_actions, macro_indicators, derivatives_daily
+        - intraday_metrics, weekly_metrics (when data is available)
         """
         if not self.ts_store:
             return
@@ -591,6 +594,11 @@ class DataPipelineService:
         technical_records = []
         fundamental_records = []
         shareholding_records = []
+        valuation_records = []
+        derived_records = []
+        ml_feature_records = []
+        risk_records = []
+        corporate_records = []
 
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -598,11 +606,13 @@ class DataPipelineService:
             if not isinstance(data, dict):
                 continue
 
-            # Extract price data for PostgreSQL
+            sym_date = data.get("date", today_str)
+
+            # 1. Price data
             if any(k in data for k in ["close", "ltp", "current_price", "open", "high", "low"]):
                 price_records.append({
                     "symbol": symbol,
-                    "date": data.get("date", today_str),
+                    "date": sym_date,
                     "open": data.get("open", data.get("day_open", 0)),
                     "high": data.get("high", data.get("day_high", 0)),
                     "low": data.get("low", data.get("day_low", 0)),
@@ -612,51 +622,132 @@ class DataPipelineService:
                     "turnover": data.get("turnover", 0),
                 })
 
-            # Extract technical data if available
-            tech_fields = ["rsi_14", "sma_20", "sma_50", "sma_200", "ema_12", "ema_26", "macd"]
+            # 2. Technical indicators (all schema columns)
+            tech_fields = [
+                "rsi_14", "sma_20", "sma_50", "sma_200", "ema_12", "ema_26", "macd",
+                "macd_signal", "macd_histogram", "bollinger_upper", "bollinger_lower",
+                "atr_14", "adx_14", "obv", "support_level", "resistance_level",
+                "ichimoku_tenkan", "ichimoku_kijun", "ichimoku_senkou_a", "ichimoku_senkou_b",
+                "stoch_k", "stoch_d", "cci_20", "williams_r", "cmf",
+            ]
             if any(k in data for k in tech_fields):
                 technical_records.append({
                     "symbol": symbol,
-                    "date": data.get("date", today_str),
-                    **{k: data.get(k) for k in [
-                        "sma_20", "sma_50", "sma_200", "ema_12", "ema_26",
-                        "rsi_14", "macd", "macd_signal", "bollinger_upper",
-                        "bollinger_lower", "atr_14", "adx_14", "obv",
-                        "support_level", "resistance_level"
-                    ] if k in data}
+                    "date": sym_date,
+                    **{k: data.get(k) for k in tech_fields if k in data}
                 })
 
-            # Extract fundamental data if available
-            fund_fields = ["revenue", "net_profit", "eps", "roe", "debt_to_equity"]
-            if any(k in data for k in fund_fields):
+            # 3. Fundamentals (all schema columns)
+            fund_detect = ["revenue", "net_profit", "eps", "roe", "debt_to_equity"]
+            fund_cols = [
+                "revenue", "revenue_growth_yoy", "revenue_growth_qoq",
+                "operating_profit", "operating_margin", "gross_profit", "gross_margin",
+                "net_profit", "net_profit_margin", "eps", "eps_growth_yoy",
+                "interest_expense", "depreciation", "ebitda", "ebit",
+                "other_income", "tax_expense", "effective_tax_rate",
+                "total_assets", "total_equity", "total_debt", "long_term_debt",
+                "short_term_debt", "cash_and_equiv", "net_debt",
+                "current_assets", "current_liabilities", "inventory",
+                "receivables", "payables", "fixed_assets", "intangible_assets",
+                "reserves_and_surplus", "book_value_per_share", "contingent_liabilities",
+                "operating_cash_flow", "investing_cash_flow", "financing_cash_flow",
+                "capital_expenditure", "free_cash_flow", "dividends_paid",
+                "debt_repayment", "equity_raised",
+                "roe", "roa", "roic", "debt_to_equity", "interest_coverage",
+                "current_ratio", "quick_ratio", "asset_turnover",
+                "inventory_turnover", "receivables_turnover", "dividend_payout_ratio",
+                "earnings_surprise_pct", "analyst_rating_consensus",
+                "target_price_consensus", "num_analysts",
+                "revenue_5y_cagr", "eps_5y_cagr", "roe_5y_avg", "fcf_3y_avg",
+            ]
+            if any(k in data for k in fund_detect):
                 fundamental_records.append({
                     "symbol": symbol,
-                    "period_end": data.get("period_end", data.get("date", today_str)),
+                    "period_end": data.get("period_end", sym_date),
                     "period_type": data.get("period_type", "quarterly"),
-                    **{k: data.get(k) for k in [
-                        "revenue", "operating_profit", "operating_margin",
-                        "net_profit", "net_profit_margin", "eps", "ebitda",
-                        "total_assets", "total_equity", "total_debt",
-                        "cash_and_equiv", "operating_cash_flow", "free_cash_flow",
-                        "roe", "debt_to_equity", "interest_coverage", "current_ratio"
-                    ] if k in data}
+                    **{k: data.get(k) for k in fund_cols if k in data}
                 })
 
-            # Extract shareholding data if available
+            # 4. Shareholding
             share_fields = ["promoter_holding", "fii_holding", "dii_holding"]
+            share_cols = [
+                "promoter_holding", "promoter_pledging", "fii_holding",
+                "dii_holding", "public_holding", "promoter_holding_change",
+                "fii_holding_change", "num_shareholders", "mf_holding",
+                "insurance_holding",
+            ]
             if any(k in data for k in share_fields):
                 shareholding_records.append({
                     "symbol": symbol,
-                    "quarter_end": data.get("quarter_end", data.get("date", today_str)),
+                    "quarter_end": data.get("quarter_end", sym_date),
+                    **{k: data.get(k) for k in share_cols if k in data}
+                })
+
+            # 5. Valuation metrics (if present in data)
+            val_detect = ["pe_ratio", "pb_ratio", "market_cap", "dividend_yield", "ev_to_ebitda"]
+            val_cols = [
+                "market_cap", "enterprise_value", "pe_ratio", "pe_ratio_forward",
+                "peg_ratio", "pb_ratio", "ps_ratio", "ev_to_ebitda", "ev_to_sales",
+                "dividend_yield", "fcf_yield", "earnings_yield",
+                "sector_avg_pe", "sector_avg_roe", "industry_avg_pe",
+                "historical_pe_median", "sector_performance",
+            ]
+            if any(k in data for k in val_detect):
+                valuation_records.append({
+                    "symbol": symbol,
+                    "date": sym_date,
+                    **{k: data.get(k) for k in val_cols if k in data}
+                })
+
+            # 6. ML features (if present)
+            ml_detect = ["realized_volatility_10d", "momentum_rank_sector", "volume_zscore"]
+            ml_cols = [
+                "realized_volatility_10d", "realized_volatility_20d",
+                "return_1d_pct", "return_3d_pct", "return_10d_pct",
+                "momentum_rank_sector", "price_vs_sma20_pct", "price_vs_sma50_pct",
+                "volume_zscore", "volatility_percentile_1y",
+                "turnover_20d_avg", "free_float_market_cap",
+                "days_since_earnings", "days_to_earnings", "trading_day_of_week",
+                "nifty_50_return_1m", "fii_net_activity_daily", "dii_net_activity_daily",
+                "sp500_return_1d", "nasdaq_return_1d",
+            ]
+            if any(k in data for k in ml_detect):
+                ml_feature_records.append({
+                    "symbol": symbol,
+                    "date": sym_date,
+                    **{k: data.get(k) for k in ml_cols if k in data}
+                })
+
+            # 7. Risk metrics (if present)
+            risk_detect = ["beta_1y", "sharpe_ratio_1y", "max_drawdown_1y"]
+            risk_cols = [
+                "beta_1y", "beta_3y", "max_drawdown_1y",
+                "sharpe_ratio_1y", "sortino_ratio_1y", "information_ratio_1y",
+                "rolling_volatility_30d", "downside_deviation_1y",
+            ]
+            if any(k in data for k in risk_detect):
+                risk_records.append({
+                    "symbol": symbol,
+                    "date": sym_date,
+                    **{k: data.get(k) for k in risk_cols if k in data}
+                })
+
+            # 8. Corporate actions (if present)
+            corp_detect = ["dividend_per_share", "stock_split_ratio", "bonus_ratio", "action_type"]
+            if any(k in data for k in corp_detect):
+                corporate_records.append({
+                    "symbol": symbol,
+                    "action_type": data.get("action_type", "dividend"),
+                    "action_date": data.get("action_date", sym_date),
                     **{k: data.get(k) for k in [
-                        "promoter_holding", "promoter_pledging", "fii_holding",
-                        "dii_holding", "public_holding", "promoter_holding_change",
-                        "fii_holding_change", "num_shareholders", "mf_holding",
-                        "insurance_holding"
+                        "ex_date", "record_date", "dividend_per_share",
+                        "stock_split_ratio", "bonus_ratio", "rights_issue_ratio",
+                        "buyback_details", "next_earnings_date", "pending_events",
+                        "stock_status", "sebi_investigation",
                     ] if k in data}
                 })
 
-        # Upsert to PostgreSQL
+        # Upsert to PostgreSQL — all table writes in same try block
         try:
             if price_records:
                 count = await self.ts_store.upsert_prices(price_records)
@@ -673,6 +764,31 @@ class DataPipelineService:
             if shareholding_records:
                 count = await self.ts_store.upsert_shareholding(shareholding_records)
                 self._log_event("pg_shareholding_upserted", {"count": count})
+
+            if valuation_records:
+                count = await self.ts_store.upsert_valuation(valuation_records)
+                self._log_event("pg_valuation_upserted", {"count": count})
+
+            if derived_records:
+                count = await self.ts_store.upsert_derived_metrics(derived_records)
+                self._log_event("pg_derived_upserted", {"count": count})
+
+            if ml_feature_records:
+                count = await self.ts_store.upsert_ml_features(ml_feature_records)
+                self._log_event("pg_ml_features_upserted", {"count": count})
+
+            if risk_records:
+                count = await self.ts_store.upsert_risk_metrics(risk_records)
+                self._log_event("pg_risk_upserted", {"count": count})
+
+            if corporate_records:
+                for rec in corporate_records:
+                    await self.ts_store.insert_corporate_action(rec)
+                self._log_event("pg_corporate_actions_inserted", {"count": len(corporate_records)})
+
+            # Corporate actions / macro indicators / derivatives / intraday / weekly:
+            # To be filled by separate extractors or derivation jobs when data
+            # sources become available (NSE F&O, RBI macro, intraday feed).
 
         except Exception as e:
             logger.warning(f"PostgreSQL persistence error: {e}")
