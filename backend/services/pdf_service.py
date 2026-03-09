@@ -26,19 +26,37 @@ try:
 except ImportError:
     PDF_AVAILABLE = False
     logger.warning("ReportLab not installed. PDF generation will not be available.")
+    # Provide stubs so module-level references don't crash
+    import types
+    colors = types.SimpleNamespace(
+        HexColor=lambda x: None, Color=type(None),
+        grey=None, white=None
+    )
+    TA_CENTER = TA_LEFT = TA_RIGHT = 0
+    class _Stub:
+        def __init__(self, *a, **kw): pass
+    SimpleDocTemplate = Paragraph = Spacer = Table = TableStyle = _Stub
+    PageBreak = Image = HRFlowable = _Stub
+    A4 = letter = (0, 0)
+    inch = cm = 1
+    def getSampleStyleSheet(): return {}
+    ParagraphStyle = _Stub
 
 
 # Custom colors for the dark theme report
-COLORS = {
-    "primary": colors.HexColor("#3B82F6"),
-    "success": colors.HexColor("#22C55E"),
-    "danger": colors.HexColor("#EF4444"),
-    "warning": colors.HexColor("#F59E0B"),
-    "text": colors.HexColor("#333333"),
-    "muted": colors.HexColor("#666666"),
-    "light": colors.HexColor("#F4F4F5"),
-    "dark": colors.HexColor("#18181B"),
-}
+if PDF_AVAILABLE:
+    COLORS = {
+        "primary": colors.HexColor("#3B82F6"),
+        "success": colors.HexColor("#22C55E"),
+        "danger": colors.HexColor("#EF4444"),
+        "warning": colors.HexColor("#F59E0B"),
+        "text": colors.HexColor("#333333"),
+        "muted": colors.HexColor("#666666"),
+        "light": colors.HexColor("#F4F4F5"),
+        "dark": colors.HexColor("#18181B"),
+    }
+else:
+    COLORS = {}
 
 
 def is_pdf_available() -> bool:

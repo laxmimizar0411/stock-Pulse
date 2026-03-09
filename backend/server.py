@@ -1500,6 +1500,13 @@ try:
 except ImportError as e:
     logger.warning(f"Backtesting service not available: {e}")
     BACKTEST_AVAILABLE = False
+    # Provide stubs so endpoint type annotations don't crash at module load
+    from pydantic import BaseModel as _BM
+    class BacktestConfig(_BM):
+        symbol: str = ""
+        strategy: str = ""
+    class StrategyType:
+        pass
 
 
 @api_router.get("/backtest/strategies")
@@ -2499,10 +2506,10 @@ async def get_screener_metrics():
     }
 
 
-# Include routers
-app.include_router(api_router)
+# Include sub-routers into api_router first, then mount api_router on app
 api_router.include_router(db_dashboard_router)
 api_router.include_router(pg_control_router)
+app.include_router(api_router)
 
 # CORS middleware - default to localhost only, never open wildcard
 _cors_origins_env = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000')
