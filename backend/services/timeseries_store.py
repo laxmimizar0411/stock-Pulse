@@ -840,6 +840,15 @@ class TimeSeriesStore:
                 sebi_investigation = EXCLUDED.sebi_investigation
             RETURNING id
         """
+        def _parse_date(val):
+            if val is None:
+                return None
+            if isinstance(val, date):
+                return val
+            if isinstance(val, str) and val.strip():
+                return datetime.strptime(val.strip(), "%Y-%m-%d").date()
+            return None
+
         async with self._pool.acquire() as conn:
             d = _parse_date(record.get("action_date"))
             ex = _parse_date(record.get("ex_date"))
