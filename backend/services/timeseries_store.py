@@ -12,11 +12,28 @@ Uses asyncpg for high-performance async PostgreSQL access.
 """
 
 import asyncpg
+import json
 import logging
 from datetime import datetime, date, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_date(val) -> Optional[date]:
+    """Safely parse a date value. Returns None for empty/invalid strings."""
+    if val is None:
+        return None
+    if isinstance(val, date):
+        return val
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return None
+        return datetime.strptime(val, "%Y-%m-%d").date()
+    return None
 
 
 class TimeSeriesStore:
@@ -88,16 +105,17 @@ class TimeSeriesStore:
         
         query = """
             INSERT INTO prices_daily (
-                symbol, date, open, high, low, close, last, prev_close,
+                symbol, date, open, high, low, close, adjusted_close, last, prev_close,
                 volume, turnover, total_trades, delivery_qty, delivery_pct,
                 vwap, isin, series
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (symbol, date)
             DO UPDATE SET
                 open = EXCLUDED.open,
                 high = EXCLUDED.high,
                 low = EXCLUDED.low,
                 close = EXCLUDED.close,
+                adjusted_close = COALESCE(EXCLUDED.adjusted_close, prices_daily.adjusted_close),
                 last = EXCLUDED.last,
                 prev_close = EXCLUDED.prev_close,
                 volume = EXCLUDED.volume,
@@ -109,17 +127,18 @@ class TimeSeriesStore:
                 isin = EXCLUDED.isin,
                 series = EXCLUDED.series
         """
-        
+
         count = 0
         async with self._pool.acquire() as conn:
             # Use a transaction for batch insert
             async with conn.transaction():
                 for record in records:
                     try:
-                        date_val = record.get("date")
-                        if isinstance(date_val, str):
-                            date_val = datetime.strptime(date_val, "%Y-%m-%d").date()
-                        
+                        date_val = _parse_date(record.get("date"))
+                        adj_close = record.get("adjusted_close")
+                        if adj_close is not None:
+                            adj_close = float(adj_close)
+
                         await conn.execute(
                             query,
                             record.get("symbol", ""),
@@ -128,6 +147,7 @@ class TimeSeriesStore:
                             float(record.get("high", 0) or 0),
                             float(record.get("low", 0) or 0),
                             float(record.get("close", 0) or 0),
+                            adj_close,
                             float(record.get("last", 0) or 0),
                             float(record.get("prev_close", 0) or 0),
                             int(record.get("volume", 0) or 0),
@@ -169,17 +189,21 @@ class TimeSeriesStore:
         idx = 2
         
         if start_date:
-            conditions.append(f"date >= ${idx}")
-            params.append(datetime.strptime(start_date, "%Y-%m-%d").date())
-            idx += 1
+            sd = _parse_date(start_date)
+            if sd:
+                conditions.append(f"date >= ${idx}")
+                params.append(sd)
+                idx += 1
         if end_date:
-            conditions.append(f"date <= ${idx}")
-            params.append(datetime.strptime(end_date, "%Y-%m-%d").date())
-            idx += 1
-        
+            ed = _parse_date(end_date)
+            if ed:
+                conditions.append(f"date <= ${idx}")
+                params.append(ed)
+                idx += 1
+
         where = " AND ".join(conditions)
         query = f"""
-            SELECT symbol, date, open, high, low, close, last, prev_close,
+            SELECT symbol, date, open, high, low, close, adjusted_close, last, prev_close,
                    volume, turnover, total_trades, delivery_qty, delivery_pct,
                    vwap, isin, series
             FROM prices_daily
@@ -213,13 +237,22 @@ class TimeSeriesStore:
     ) -> List[Dict[str, Any]]:
         """
         Get weekly aggregated price history for a symbol.
-        Leverages TimescaleDB continuous aggregate `prices_weekly` if available.
+        Uses plain-Postgres aggregation from prices_daily (no TimescaleDB required).
+        Each week starts on Monday (ISO week). Open = first day's open, Close = last day's close.
         """
         query = f"""
-            SELECT symbol, week as date, open, high, low, close, volume
-            FROM prices_weekly
+            SELECT
+                $1::text AS symbol,
+                date_trunc('week', date)::date AS date,
+                (ARRAY_AGG(open ORDER BY date ASC))[1] AS open,
+                MAX(high) AS high,
+                MIN(low) AS low,
+                (ARRAY_AGG(close ORDER BY date DESC))[1] AS close,
+                SUM(volume) AS volume
+            FROM prices_daily
             WHERE symbol = $1
-            ORDER BY week DESC
+            GROUP BY date_trunc('week', date)
+            ORDER BY date DESC
             LIMIT {limit}
         """
         try:
@@ -227,21 +260,30 @@ class TimeSeriesStore:
                 rows = await conn.fetch(query, symbol)
                 return [dict(r) for r in rows]
         except Exception as e:
-            logger.warning(f"Failed to fetch weekly prices from continuous aggregate (is TimescaleDB installed?): {e}")
+            logger.warning(f"Failed to aggregate weekly prices: {e}")
             return []
-            
+
     async def get_monthly_prices(
         self, symbol: str, limit: int = 60
     ) -> List[Dict[str, Any]]:
         """
         Get monthly aggregated price history for a symbol.
-        Leverages TimescaleDB continuous aggregate `prices_monthly` if available.
+        Uses plain-Postgres aggregation from prices_daily (no TimescaleDB required).
+        Open = first day's open, Close = last day's close.
         """
         query = f"""
-            SELECT symbol, month as date, open, high, low, close, volume
-            FROM prices_monthly
+            SELECT
+                $1::text AS symbol,
+                date_trunc('month', date)::date AS date,
+                (ARRAY_AGG(open ORDER BY date ASC))[1] AS open,
+                MAX(high) AS high,
+                MIN(low) AS low,
+                (ARRAY_AGG(close ORDER BY date DESC))[1] AS close,
+                SUM(volume) AS volume
+            FROM prices_daily
             WHERE symbol = $1
-            ORDER BY month DESC
+            GROUP BY date_trunc('month', date)
+            ORDER BY date DESC
             LIMIT {limit}
         """
         try:
@@ -249,7 +291,7 @@ class TimeSeriesStore:
                 rows = await conn.fetch(query, symbol)
                 return [dict(r) for r in rows]
         except Exception as e:
-            logger.warning(f"Failed to fetch monthly prices from continuous aggregate (is TimescaleDB installed?): {e}")
+            logger.warning(f"Failed to aggregate monthly prices: {e}")
             return []
     
     # ========================
@@ -296,9 +338,7 @@ class TimeSeriesStore:
             async with conn.transaction():
                 for r in records:
                     try:
-                        date_val = r.get("date")
-                        if isinstance(date_val, str):
-                            date_val = datetime.strptime(date_val, "%Y-%m-%d").date()
+                        date_val = _parse_date(r.get("date"))
 
                         await conn.execute(
                             query,
@@ -335,11 +375,11 @@ class TimeSeriesStore:
         
         if start_date:
             conditions.append(f"date >= ${idx}")
-            params.append(datetime.strptime(start_date, "%Y-%m-%d").date())
+            params.append(_parse_date(start_date))
             idx += 1
         if end_date:
             conditions.append(f"date <= ${idx}")
-            params.append(datetime.strptime(end_date, "%Y-%m-%d").date())
+            params.append(_parse_date(end_date))
             idx += 1
         
         where = " AND ".join(conditions)
@@ -403,9 +443,7 @@ class TimeSeriesStore:
             async with conn.transaction():
                 for r in records:
                     try:
-                        period_end = r.get("period_end")
-                        if isinstance(period_end, str):
-                            period_end = datetime.strptime(period_end, "%Y-%m-%d").date()
+                        period_end = _parse_date(r.get("period_end"))
 
                         params = [
                             r.get("symbol", ""),
@@ -475,9 +513,7 @@ class TimeSeriesStore:
             async with conn.transaction():
                 for r in records:
                     try:
-                        quarter_end = r.get("quarter_end")
-                        if isinstance(quarter_end, str):
-                            quarter_end = datetime.strptime(quarter_end, "%Y-%m-%d").date()
+                        quarter_end = _parse_date(r.get("quarter_end"))
                         
                         await conn.execute(
                             query,
@@ -547,9 +583,7 @@ class TimeSeriesStore:
             async with conn.transaction():
                 for r in records:
                     try:
-                        d = r.get("date")
-                        if isinstance(d, str):
-                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        d = _parse_date(r.get("date"))
                         await conn.execute(
                             query, r.get("symbol", ""), d,
                             r.get("daily_return_pct"), r.get("return_5d_pct"),
@@ -574,11 +608,11 @@ class TimeSeriesStore:
         idx = 2
         if start_date:
             conditions.append(f"date >= ${idx}")
-            params.append(datetime.strptime(start_date, "%Y-%m-%d").date())
+            params.append(_parse_date(start_date))
             idx += 1
         if end_date:
             conditions.append(f"date <= ${idx}")
-            params.append(datetime.strptime(end_date, "%Y-%m-%d").date())
+            params.append(_parse_date(end_date))
             idx += 1
         where = " AND ".join(conditions)
         query = f"SELECT * FROM derived_metrics_daily WHERE {where} ORDER BY date DESC LIMIT {limit}"
@@ -620,9 +654,7 @@ class TimeSeriesStore:
             async with conn.transaction():
                 for r in records:
                     try:
-                        d = r.get("date")
-                        if isinstance(d, str):
-                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        d = _parse_date(r.get("date"))
                         await conn.execute(
                             query, r.get("symbol", ""), d,
                             r.get("market_cap"), r.get("enterprise_value"),
@@ -697,9 +729,7 @@ class TimeSeriesStore:
             async with conn.transaction():
                 for r in records:
                     try:
-                        d = r.get("date")
-                        if isinstance(d, str):
-                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        d = _parse_date(r.get("date"))
                         await conn.execute(
                             query, r.get("symbol", ""), d,
                             r.get("realized_volatility_10d"), r.get("realized_volatility_20d"),
@@ -759,9 +789,7 @@ class TimeSeriesStore:
             async with conn.transaction():
                 for r in records:
                     try:
-                        d = r.get("date")
-                        if isinstance(d, str):
-                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        d = _parse_date(r.get("date"))
                         await conn.execute(
                             query, r.get("symbol", ""), d,
                             r.get("beta_1y"), r.get("beta_3y"),
@@ -789,8 +817,8 @@ class TimeSeriesStore:
     # Corporate Actions
     # ========================
 
-    async def insert_corporate_action(self, record: Dict[str, Any]) -> int:
-        """Insert a corporate action record."""
+    async def upsert_corporate_action(self, record: Dict[str, Any]) -> int:
+        """Insert or update a corporate action (deduplicates on symbol+action_type+action_date)."""
         query = """
             INSERT INTO corporate_actions (
                 symbol, action_type, action_date, ex_date, record_date,
@@ -798,26 +826,30 @@ class TimeSeriesStore:
                 rights_issue_ratio, buyback_details, next_earnings_date,
                 pending_events, stock_status, sebi_investigation
             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+            ON CONFLICT (symbol, action_type, action_date) DO UPDATE SET
+                ex_date = COALESCE(EXCLUDED.ex_date, corporate_actions.ex_date),
+                record_date = COALESCE(EXCLUDED.record_date, corporate_actions.record_date),
+                dividend_per_share = COALESCE(EXCLUDED.dividend_per_share, corporate_actions.dividend_per_share),
+                stock_split_ratio = COALESCE(EXCLUDED.stock_split_ratio, corporate_actions.stock_split_ratio),
+                bonus_ratio = COALESCE(EXCLUDED.bonus_ratio, corporate_actions.bonus_ratio),
+                rights_issue_ratio = COALESCE(EXCLUDED.rights_issue_ratio, corporate_actions.rights_issue_ratio),
+                buyback_details = COALESCE(EXCLUDED.buyback_details, corporate_actions.buyback_details),
+                next_earnings_date = COALESCE(EXCLUDED.next_earnings_date, corporate_actions.next_earnings_date),
+                pending_events = COALESCE(EXCLUDED.pending_events, corporate_actions.pending_events),
+                stock_status = EXCLUDED.stock_status,
+                sebi_investigation = EXCLUDED.sebi_investigation
             RETURNING id
         """
         async with self._pool.acquire() as conn:
-            d = record.get("action_date")
-            if isinstance(d, str):
-                d = datetime.strptime(d, "%Y-%m-%d").date()
-            ex = record.get("ex_date")
-            if isinstance(ex, str):
-                ex = datetime.strptime(ex, "%Y-%m-%d").date()
-            rec = record.get("record_date")
-            if isinstance(rec, str):
-                rec = datetime.strptime(rec, "%Y-%m-%d").date()
-            ne = record.get("next_earnings_date")
-            if isinstance(ne, str):
-                ne = datetime.strptime(ne, "%Y-%m-%d").date()
+            d = _parse_date(record.get("action_date"))
+            ex = _parse_date(record.get("ex_date"))
+            rec_date = _parse_date(record.get("record_date"))
+            ne = _parse_date(record.get("next_earnings_date"))
 
             return await conn.fetchval(
                 query,
                 record.get("symbol", ""), record.get("action_type", ""),
-                d, ex, rec,
+                d, ex, rec_date,
                 record.get("dividend_per_share"), record.get("stock_split_ratio"),
                 record.get("bonus_ratio"), record.get("rights_issue_ratio"),
                 record.get("buyback_details"), ne,
@@ -862,9 +894,7 @@ class TimeSeriesStore:
             async with conn.transaction():
                 for r in records:
                     try:
-                        d = r.get("date")
-                        if isinstance(d, str):
-                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        d = _parse_date(r.get("date"))
                         await conn.execute(
                             query, d,
                             r.get("cpi_inflation"), r.get("iip_growth"),
@@ -924,9 +954,7 @@ class TimeSeriesStore:
             async with conn.transaction():
                 for r in records:
                     try:
-                        d = r.get("date")
-                        if isinstance(d, str):
-                            d = datetime.strptime(d, "%Y-%m-%d").date()
+                        d = _parse_date(r.get("date"))
                         await conn.execute(
                             query, r.get("symbol", ""), d,
                             r.get("futures_oi"), r.get("futures_oi_change_pct"),
@@ -1061,9 +1089,7 @@ class TimeSeriesStore:
                 for r in records:
                     try:
                         import json as _json
-                        ws = r.get("week_start")
-                        if isinstance(ws, str):
-                            ws = datetime.strptime(ws, "%Y-%m-%d").date()
+                        ws = _parse_date(r.get("week_start"))
 
                         sr = r.get("support_resistance_weekly")
                         if sr and not isinstance(sr, str):

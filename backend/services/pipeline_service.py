@@ -409,6 +409,18 @@ class DataPipelineService:
             if self.ts_store and job.results:
                 await self._persist_to_timeseries(job.results)
 
+                # Auto-compute derived metrics from freshly persisted prices
+                try:
+                    from jobs.derive_metrics import compute_derived_metrics
+                    symbols = [s for s in job.results.keys() if isinstance(job.results[s], dict)]
+                    if symbols:
+                        derived_count = await compute_derived_metrics(
+                            self.ts_store, symbols=symbols, lookback_days=60
+                        )
+                        self._log_event("pg_derived_auto_computed", {"count": derived_count})
+                except Exception as e:
+                    logger.warning(f"Auto-derive metrics failed (non-fatal): {e}")
+
             # Store job record in MongoDB
             if self.db is not None:
                 try:
@@ -595,7 +607,6 @@ class DataPipelineService:
         fundamental_records = []
         shareholding_records = []
         valuation_records = []
-        derived_records = []
         ml_feature_records = []
         risk_records = []
         corporate_records = []
@@ -610,7 +621,7 @@ class DataPipelineService:
 
             # 1. Price data
             if any(k in data for k in ["close", "ltp", "current_price", "open", "high", "low"]):
-                price_records.append({
+                price_rec = {
                     "symbol": symbol,
                     "date": sym_date,
                     "open": data.get("open", data.get("day_open", 0)),
@@ -620,7 +631,10 @@ class DataPipelineService:
                     "prev_close": data.get("prev_close", data.get("previous_close", 0)),
                     "volume": data.get("volume", data.get("total_traded_volume", 0)),
                     "turnover": data.get("turnover", 0),
-                })
+                }
+                if "adjusted_close" in data:
+                    price_rec["adjusted_close"] = data["adjusted_close"]
+                price_records.append(price_rec)
 
             # 2. Technical indicators (all schema columns)
             tech_fields = [
@@ -769,10 +783,6 @@ class DataPipelineService:
                 count = await self.ts_store.upsert_valuation(valuation_records)
                 self._log_event("pg_valuation_upserted", {"count": count})
 
-            if derived_records:
-                count = await self.ts_store.upsert_derived_metrics(derived_records)
-                self._log_event("pg_derived_upserted", {"count": count})
-
             if ml_feature_records:
                 count = await self.ts_store.upsert_ml_features(ml_feature_records)
                 self._log_event("pg_ml_features_upserted", {"count": count})
@@ -783,12 +793,8 @@ class DataPipelineService:
 
             if corporate_records:
                 for rec in corporate_records:
-                    await self.ts_store.insert_corporate_action(rec)
-                self._log_event("pg_corporate_actions_inserted", {"count": len(corporate_records)})
-
-            # Corporate actions / macro indicators / derivatives / intraday / weekly:
-            # To be filled by separate extractors or derivation jobs when data
-            # sources become available (NSE F&O, RBI macro, intraday feed).
+                    await self.ts_store.upsert_corporate_action(rec)
+                self._log_event("pg_corporate_actions_upserted", {"count": len(corporate_records)})
 
         except Exception as e:
             logger.warning(f"PostgreSQL persistence error: {e}")

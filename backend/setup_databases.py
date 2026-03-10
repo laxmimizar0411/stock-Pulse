@@ -332,7 +332,8 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
     pending_events      TEXT,
     stock_status        VARCHAR(30)     DEFAULT 'active',
     sebi_investigation  BOOLEAN         DEFAULT FALSE,
-    created_at          TIMESTAMPTZ     DEFAULT now()
+    created_at          TIMESTAMPTZ     DEFAULT now(),
+    UNIQUE (symbol, action_type, action_date)
 );
 
 CREATE INDEX IF NOT EXISTS idx_corp_symbol ON corporate_actions (symbol);

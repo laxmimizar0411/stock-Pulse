@@ -347,8 +347,8 @@ PostgreSQL Tables (14):
 6. `valuation_daily` - P/E, P/B, EV/EBITDA, dividend yield, PEG
 7. `fundamentals_quarterly` - Revenue, profit, ratios (55+ cols)
 8. `shareholding_quarterly` - Promoter, FII, DII holdings
-9. `corporate_actions` - Dividends, splits, bonuses
-10. `macro_indicators` - Repo rate, GDP, CPI, USD/INR
+9. `corporate_actions` - Dividends, splits, bonuses (id SERIAL + UNIQUE on symbol, action_type, action_date)
+10. `macro_indicators` - CPI, IIP, repo rate, USD/INR, commodity prices (PK: date)
 11. `derivatives_daily` - Futures OI, options, put-call ratio, IV
 12. `intraday_metrics` - VWAP, tick count, bid/ask snapshots (JSONB)
 13. `weekly_metrics` - SMA crossover, sectoral heatmap (JSONB)

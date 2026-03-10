@@ -41,8 +41,8 @@
 | 6 | `valuation_daily` | (symbol, date) | pe, pb, ps, ev_ebitda, dividend_yield, peg, mcap, enterprise_value | Pipeline |
 | 7 | `fundamentals_quarterly` | (symbol, period_end, period_type) | 55+ cols: revenue, profit, margins, EPS, balance sheet, cash flow, ratios | Pipeline |
 | 8 | `shareholding_quarterly` | (symbol, quarter_end) | promoter, FII, DII, public, pledging, MF, insurance — 11 cols | Pipeline |
-| 9 | `corporate_actions` | (symbol, ex_date, action_type) | dividend_amount, split ratio, bonus ratio, record_date | Pipeline |
-| 10 | `macro_indicators` | (indicator_name, date) | value, previous_value, unit, source | Macro job |
+| 9 | `corporate_actions` | id SERIAL + UNIQUE(symbol, action_type, action_date) | dividend_per_share, split ratio, bonus ratio, record_date | Pipeline |
+| 10 | `macro_indicators` | (date) | cpi_inflation, iip_growth, rbi_repo_rate, usdinr_rate, crude/gold/steel/copper prices | Macro job |
 | 11 | `derivatives_daily` | (symbol, date) | futures_oi, options_oi, pcr, iv, max_pain, rollover_pct | Derivatives job |
 | 12 | `intraday_metrics` | (symbol, timestamp) | vwap_intraday, tick_count, JSONB bid_ask_snapshot | Intraday job |
 | 13 | `weekly_metrics` | (symbol, week_start) | sma_weekly_crossover, JSONB support_resistance/sectoral_heatmap | Derivation job |
