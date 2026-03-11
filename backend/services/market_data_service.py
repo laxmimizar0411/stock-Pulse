@@ -2,6 +2,8 @@
 Market Data Service for StockPulse
 Provides real-time and historical stock data from Indian markets (NSE/BSE)
 Uses Yahoo Finance as primary data provider
+
+Caches via Redis (CacheService) when available, with in-memory fallback.
 """
 
 import os
@@ -14,11 +16,15 @@ import json
 
 logger = logging.getLogger(__name__)
 
-# Cache for storing fetched data
-_price_cache: Dict[str, Dict] = {}
-_cache_timestamps: Dict[str, datetime] = {}
+# TTL constants (seconds)
 CACHE_TTL_SECONDS = 60  # 1 minute cache for real-time data
 HISTORICAL_CACHE_TTL = 3600  # 1 hour for historical data
+INDICES_CACHE_TTL = 60  # 1 minute for market indices
+FUNDAMENTALS_CACHE_TTL = 3600  # 1 hour for fundamentals
+
+# In-memory fallback (used only when Redis is unavailable)
+_price_cache: Dict[str, Dict] = {}
+_cache_timestamps: Dict[str, datetime] = {}
 
 # NSE stock symbols need .NS suffix for Yahoo Finance
 # BSE stock symbols need .BO suffix
@@ -86,23 +92,55 @@ STOCK_SYMBOL_MAP = {
 }
 
 
+def _get_cache():
+    """Get the global CacheService if available."""
+    try:
+        from services.cache_service import get_cache_service
+        return get_cache_service()
+    except Exception:
+        return None
+
+
+def _cache_get(key: str) -> Optional[Any]:
+    """Get from Redis (via CacheService) first, then in-memory fallback."""
+    svc = _get_cache()
+    if svc:
+        result = svc.get(key)
+        if result is not None:
+            return result
+    # In-memory fallback
+    if key in _cache_timestamps:
+        return _price_cache.get(key)
+    return None
+
+
+def _cache_set(key: str, value: Any, ttl: int) -> None:
+    """Set in Redis (via CacheService) and in-memory fallback."""
+    svc = _get_cache()
+    if svc:
+        svc.set(key, value, ttl)
+    # Always keep in-memory copy as fallback
+    _price_cache[key] = value
+    _cache_timestamps[key] = datetime.now()
+
+
 def get_yahoo_symbol(symbol: str, exchange: str = "NSE") -> str:
     """Convert Indian stock symbol to Yahoo Finance format"""
     # Check if already in map
     if symbol in STOCK_SYMBOL_MAP:
         return STOCK_SYMBOL_MAP[symbol]
-    
+
     # Check if it's an index
     if symbol in INDIAN_INDICES:
         return INDIAN_INDICES[symbol]
-    
+
     # Default: append NSE suffix
     suffix = INDIAN_STOCK_SUFFIXES.get(exchange, ".NS")
     return f"{symbol}{suffix}"
 
 
 def is_cache_valid(cache_key: str, ttl: int = CACHE_TTL_SECONDS) -> bool:
-    """Check if cached data is still valid"""
+    """Check if cached data is still valid (in-memory only check)."""
     if cache_key not in _cache_timestamps:
         return False
     age = (datetime.now() - _cache_timestamps[cache_key]).total_seconds()
@@ -111,27 +149,29 @@ def is_cache_valid(cache_key: str, ttl: int = CACHE_TTL_SECONDS) -> bool:
 
 async def get_stock_quote(symbol: str, use_cache: bool = True) -> Optional[Dict[str, Any]]:
     """
-    Get real-time stock quote for a symbol
-    Returns current price, change, volume, and other real-time data
+    Get real-time stock quote for a symbol.
+    Uses Redis cache (shared across instances) with in-memory fallback.
     """
-    cache_key = f"quote_{symbol}"
-    
-    if use_cache and is_cache_valid(cache_key):
-        return _price_cache.get(cache_key)
-    
+    cache_key = f"mkt:quote:{symbol}"
+
+    if use_cache:
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
         import yfinance as yf
-        
+
         yahoo_symbol = get_yahoo_symbol(symbol)
         ticker = yf.Ticker(yahoo_symbol)
-        
+
         # Get real-time info
         info = ticker.info
-        
+
         if not info or 'regularMarketPrice' not in info:
             logger.warning(f"No data found for {symbol}")
             return None
-        
+
         quote_data = {
             "symbol": symbol,
             "yahoo_symbol": yahoo_symbol,
@@ -153,7 +193,7 @@ async def get_stock_quote(symbol: str, use_cache: bool = True) -> Optional[Dict[
             "industry": info.get("industry", "Unknown"),
             "timestamp": datetime.now().isoformat()
         }
-        
+
         # Calculate price change
         if quote_data["previous_close"] and quote_data["previous_close"] > 0:
             quote_data["price_change"] = quote_data["current_price"] - quote_data["previous_close"]
@@ -161,13 +201,12 @@ async def get_stock_quote(symbol: str, use_cache: bool = True) -> Optional[Dict[
         else:
             quote_data["price_change"] = 0
             quote_data["price_change_percent"] = 0
-        
-        # Cache the result
-        _price_cache[cache_key] = quote_data
-        _cache_timestamps[cache_key] = datetime.now()
-        
+
+        # Cache the result in Redis + in-memory
+        _cache_set(cache_key, quote_data, CACHE_TTL_SECONDS)
+
         return quote_data
-        
+
     except ImportError:
         logger.error("yfinance not installed. Run: pip install yfinance")
         return None
@@ -177,38 +216,35 @@ async def get_stock_quote(symbol: str, use_cache: bool = True) -> Optional[Dict[
 
 
 async def get_historical_data(
-    symbol: str, 
+    symbol: str,
     period: str = "1y",
     interval: str = "1d",
     use_cache: bool = True
 ) -> List[Dict[str, Any]]:
     """
-    Get historical price data for a symbol
-    
-    Args:
-        symbol: Stock symbol
-        period: Data period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
-        interval: Data interval (1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo)
-        use_cache: Whether to use cached data
+    Get historical price data for a symbol.
+    Uses Redis cache (shared across instances) with in-memory fallback.
     """
-    cache_key = f"history_{symbol}_{period}_{interval}"
-    
-    if use_cache and is_cache_valid(cache_key, HISTORICAL_CACHE_TTL):
-        return _price_cache.get(cache_key, [])
-    
+    cache_key = f"mkt:history:{symbol}:{period}:{interval}"
+
+    if use_cache:
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
         import yfinance as yf
-        
+
         yahoo_symbol = get_yahoo_symbol(symbol)
         ticker = yf.Ticker(yahoo_symbol)
-        
+
         # Get historical data
         hist = ticker.history(period=period, interval=interval)
-        
+
         if hist.empty:
             logger.warning(f"No historical data found for {symbol}")
             return []
-        
+
         # Convert to list of dicts
         history_data = []
         for date, row in hist.iterrows():
@@ -220,13 +256,12 @@ async def get_historical_data(
                 "close": round(row["Close"], 2),
                 "volume": int(row["Volume"])
             })
-        
+
         # Cache the result
-        _price_cache[cache_key] = history_data
-        _cache_timestamps[cache_key] = datetime.now()
-        
+        _cache_set(cache_key, history_data, HISTORICAL_CACHE_TTL)
+
         return history_data
-        
+
     except ImportError:
         logger.error("yfinance not installed. Run: pip install yfinance")
         return []
@@ -236,28 +271,30 @@ async def get_historical_data(
 
 
 async def get_market_indices() -> Dict[str, Any]:
-    """Get current values for major Indian market indices"""
-    cache_key = "market_indices"
-    
-    if is_cache_valid(cache_key):
-        return _price_cache.get(cache_key, {})
-    
+    """Get current values for major Indian market indices.
+    Uses Redis cache (shared across instances) with in-memory fallback."""
+    cache_key = "mkt:indices"
+
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         import yfinance as yf
-        
+
         indices_data = {}
-        
+
         for name, yahoo_symbol in INDIAN_INDICES.items():
             try:
                 ticker = yf.Ticker(yahoo_symbol)
                 info = ticker.info
-                
+
                 current_price = info.get("regularMarketPrice", 0)
                 previous_close = info.get("regularMarketPreviousClose", 0)
-                
+
                 change = current_price - previous_close if previous_close else 0
                 change_percent = (change / previous_close * 100) if previous_close else 0
-                
+
                 indices_data[name.lower()] = {
                     "value": round(current_price, 2),
                     "change": round(change, 2),
@@ -272,13 +309,12 @@ async def get_market_indices() -> Dict[str, Any]:
                     "change_percent": 0,
                     "error": str(e)
                 }
-        
+
         # Cache the result
-        _price_cache[cache_key] = indices_data
-        _cache_timestamps[cache_key] = datetime.now()
-        
+        _cache_set(cache_key, indices_data, INDICES_CACHE_TTL)
+
         return indices_data
-        
+
     except ImportError:
         logger.error("yfinance not installed")
         return {}
@@ -291,24 +327,24 @@ async def get_bulk_quotes(symbols: List[str]) -> Dict[str, Dict]:
     """Get quotes for multiple symbols efficiently"""
     try:
         import yfinance as yf
-        
+
         # Convert symbols to Yahoo format
         yahoo_symbols = [get_yahoo_symbol(s) for s in symbols]
-        
+
         # Download all at once
         tickers = yf.Tickers(" ".join(yahoo_symbols))
-        
+
         results = {}
         for i, symbol in enumerate(symbols):
             yahoo_sym = yahoo_symbols[i]
             try:
                 info = tickers.tickers[yahoo_sym].info
-                
+
                 current_price = info.get("regularMarketPrice", 0)
                 previous_close = info.get("regularMarketPreviousClose", 0)
                 change = current_price - previous_close if previous_close else 0
                 change_percent = (change / previous_close * 100) if previous_close else 0
-                
+
                 results[symbol] = {
                     "symbol": symbol,
                     "current_price": current_price,
@@ -320,9 +356,9 @@ async def get_bulk_quotes(symbols: List[str]) -> Dict[str, Dict]:
             except Exception as e:
                 logger.error(f"Error in bulk quote for {symbol}: {str(e)}")
                 results[symbol] = None
-        
+
         return results
-        
+
     except ImportError:
         logger.error("yfinance not installed")
         return {}
@@ -332,19 +368,21 @@ async def get_bulk_quotes(symbols: List[str]) -> Dict[str, Dict]:
 
 
 async def get_stock_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
-    """Get fundamental data for a stock"""
-    cache_key = f"fundamentals_{symbol}"
-    
-    if is_cache_valid(cache_key, HISTORICAL_CACHE_TTL):
-        return _price_cache.get(cache_key)
-    
+    """Get fundamental data for a stock.
+    Uses Redis cache (shared across instances) with in-memory fallback."""
+    cache_key = f"mkt:fundamentals:{symbol}"
+
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         import yfinance as yf
-        
+
         yahoo_symbol = get_yahoo_symbol(symbol)
         ticker = yf.Ticker(yahoo_symbol)
         info = ticker.info
-        
+
         fundamentals = {
             "symbol": symbol,
             "revenue_ttm": info.get("totalRevenue", 0),
@@ -362,13 +400,12 @@ async def get_stock_fundamentals(symbol: str) -> Optional[Dict[str, Any]]:
             "free_cash_flow": info.get("freeCashflow", 0),
             "operating_cash_flow": info.get("operatingCashflow", 0),
         }
-        
+
         # Cache the result
-        _price_cache[cache_key] = fundamentals
-        _cache_timestamps[cache_key] = datetime.now()
-        
+        _cache_set(cache_key, fundamentals, FUNDAMENTALS_CACHE_TTL)
+
         return fundamentals
-        
+
     except ImportError:
         logger.error("yfinance not installed")
         return None
@@ -381,32 +418,35 @@ async def get_stock_financials(symbol: str) -> Optional[Dict[str, Any]]:
     """Get financial statements data"""
     try:
         import yfinance as yf
-        
+
         yahoo_symbol = get_yahoo_symbol(symbol)
         ticker = yf.Ticker(yahoo_symbol)
-        
+
         # Get financial statements
         income_stmt = ticker.income_stmt
         balance_sheet = ticker.balance_sheet
         cash_flow = ticker.cashflow
-        
+
         return {
             "income_statement": income_stmt.to_dict() if not income_stmt.empty else {},
             "balance_sheet": balance_sheet.to_dict() if not balance_sheet.empty else {},
             "cash_flow": cash_flow.to_dict() if not cash_flow.empty else {}
         }
-        
+
     except Exception as e:
         logger.error(f"Error fetching financials for {symbol}: {str(e)}")
         return None
 
 
 def clear_cache():
-    """Clear all cached data"""
+    """Clear all cached data (in-memory and Redis market keys)"""
     global _price_cache, _cache_timestamps
     _price_cache = {}
     _cache_timestamps = {}
-    logger.info("Cache cleared")
+    svc = _get_cache()
+    if svc:
+        svc.delete_pattern("mkt:*")
+    logger.info("Market data cache cleared")
 
 
 def get_available_symbols() -> List[str]:

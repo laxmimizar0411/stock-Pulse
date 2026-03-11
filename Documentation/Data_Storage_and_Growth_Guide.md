@@ -70,6 +70,12 @@ Do this every few months so you see growth early.
   - **Indexes**: Ensure indexes exist for all main queries (symbol, date, status, etc.) so large collections don’t cause full collection scans.
 - **Redis**
   - Set **maxmemory** (e.g. 256MB–512MB) and **maxmemory-policy allkeys-lru** so Redis evicts old keys instead of using unlimited RAM. For StockPulse it’s a cache; losing old keys is acceptable.
+  - **How to set (pick one):**
+    - **redis.conf:** Add `maxmemory 256mb` and `maxmemory-policy allkeys-lru` to your `redis.conf` and restart Redis.
+    - **CLI (runtime):** `redis-cli CONFIG SET maxmemory 256mb` and `redis-cli CONFIG SET maxmemory-policy allkeys-lru` (lost on restart unless `CONFIG REWRITE` is used).
+    - **Docker:** `docker run ... redis:7-alpine redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru`
+  - **Verify:** `redis-cli CONFIG GET maxmemory` and `redis-cli CONFIG GET maxmemory-policy`.
+  - See `Documentation/REDIS_SETUP.md` for complete Redis installation, configuration, verification, and runbook.
 - **PostgreSQL**
   - Run **VACUUM** periodically (or rely on autovacuum). If you add TimescaleDB later, use compression for old time-series data.
 - **Project folder**

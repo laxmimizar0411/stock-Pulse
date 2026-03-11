@@ -37,6 +37,7 @@ from services.mock_data import (
 from services.scoring_engine import generate_analysis, generate_ml_prediction
 from services.llm_service import generate_stock_insight, summarize_news
 from services.cache_service import init_cache_service, get_cache_service, CacheService
+from services.alert_consumer import start_alert_consumer, stop_alert_consumer
 from services.timeseries_store import init_timeseries_store, get_timeseries_store, TimeSeriesStore
 
 # Import real market data service
@@ -271,11 +272,18 @@ async def health_check():
 
 @api_router.get("/database/health")
 async def database_health_check():
-    """Comprehensive health check for all database layers.
+    """Comprehensive health check for all database layers (cached 30s).
 
     Returns connectivity status, row counts, and diagnostics for
     PostgreSQL, MongoDB, Redis, and filesystem directories.
     """
+    # Check Redis cache first
+    cache_key = "api:database:health"
+    if cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     health = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "postgresql": {"status": "not_initialized"},
@@ -368,6 +376,10 @@ async def database_health_check():
     redis_ok = health["redis"]["status"] in ("connected", "fallback")
     health["overall"] = "healthy" if (pg_ok and mongo_ok and redis_ok) else "degraded"
 
+    # Cache the result for 30s
+    if cache:
+        cache.set(cache_key, health, ttl=30)
+
     return health
 
 
@@ -398,12 +410,23 @@ async def flush_cache():
 
 @api_router.get("/timeseries/stats")
 async def get_timeseries_stats():
-    """Get PostgreSQL time-series database statistics"""
+    """Get PostgreSQL time-series database statistics (cached 30s)"""
     if not _ts_store:
         return {"status": "unavailable", "message": "Time-series store not initialized"}
+
+    # Check Redis cache first
+    cache_key = "api:timeseries:stats"
+    if cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
         stats = await _ts_store.get_stats()
-        return {"status": "active", **stats}
+        result = {"status": "active", **stats}
+        if cache:
+            cache.set(cache_key, result, ttl=30)
+        return result
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -1987,9 +2010,16 @@ async def get_field_definitions():
 
 @api_router.get("/pipeline/status")
 async def get_pipeline_status():
-    """Get current data pipeline status and metrics"""
+    """Get current data pipeline status and metrics (cached 30s)"""
     global _data_pipeline_service
-    
+
+    # Check Redis cache first
+    cache_key = "api:pipeline:status"
+    if cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     if not PIPELINE_SERVICE_AVAILABLE:
         return {
             "status": "unavailable",
@@ -1998,12 +2028,15 @@ async def get_pipeline_status():
             "metrics": None,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
-    
+
     if _data_pipeline_service is None:
         _data_pipeline_service = init_pipeline_service(db=db, totp_token=GROW_TOTP_TOKEN, secret_key=GROW_SECRET_KEY)
         await _data_pipeline_service.initialize()
-    
-    return _data_pipeline_service.get_status()
+
+    result = _data_pipeline_service.get_status()
+    if cache:
+        cache.set(cache_key, result, ttl=30)
+    return result
 
 
 @api_router.post("/pipeline/run")
@@ -2868,6 +2901,14 @@ async def startup_event():
     else:
         logger.warning("Data pipeline service not available (GROW_TOTP_TOKEN/GROW_SECRET_KEY not set)")
     
+    # Start alert queue consumer (processes alerts from Redis LIST)
+    if cache and cache.is_redis_available:
+        try:
+            await start_alert_consumer()
+            logger.info("Alert queue consumer started")
+        except Exception as e:
+            logger.warning(f"Alert consumer start warning: {e}")
+
     logger.info("StockPulse API ready!")
 
 
@@ -2892,6 +2933,12 @@ async def shutdown_event():
         except Exception as e:
             logger.error(f"Error stopping pipeline service: {e}")
     
+    # Stop alert consumer
+    try:
+        await stop_alert_consumer()
+    except Exception:
+        pass
+
     # Close Redis connection
     if cache:
         cache.close()
