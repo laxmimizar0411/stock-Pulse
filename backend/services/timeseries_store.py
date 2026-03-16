@@ -620,6 +620,10 @@ class TimeSeriesStore:
         params.append(int(limit))
         limit_idx = len(params)
         query = f"SELECT * FROM derived_metrics_daily WHERE {where} ORDER BY date DESC LIMIT ${limit_idx}"
+        # Add LIMIT as a bound parameter to avoid string interpolation
+        conditions_sql = " AND ".join(conditions)
+        query = f"SELECT * FROM derived_metrics_daily WHERE {conditions_sql} ORDER BY date DESC LIMIT ${idx}"
+        params.append(int(limit))
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(query, *params)
             return [dict(r) for r in rows]
@@ -933,7 +937,7 @@ class TimeSeriesStore:
     # ========================
 
     async def upsert_derivatives(self, records: List[Dict[str, Any]]) -> int:
-        """Insert or update derivatives/F&O data."""
+        """Insert or update derivatives/F&O data. Records may include data_source ('nse_bhavcopy' or 'placeholder')."""
         if not records:
             return 0
 
@@ -944,6 +948,7 @@ class TimeSeriesStore:
                 options_call_oi_total, options_put_oi_total, put_call_ratio_oi,
                 put_call_ratio_volume, options_max_pain_strike, iv_atm_pct,
                 iv_percentile_1y, pcr_index_level, is_placeholder
+                iv_percentile_1y, pcr_index_level, data_source
             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
             ON CONFLICT (symbol, date) DO UPDATE SET
                 futures_oi = EXCLUDED.futures_oi,
@@ -961,6 +966,7 @@ class TimeSeriesStore:
                 iv_percentile_1y = EXCLUDED.iv_percentile_1y,
                 pcr_index_level = EXCLUDED.pcr_index_level,
                 is_placeholder = EXCLUDED.is_placeholder
+                data_source = EXCLUDED.data_source
         """
 
         count = 0
@@ -969,6 +975,7 @@ class TimeSeriesStore:
                 for r in records:
                     try:
                         d = _parse_date(r.get("date"))
+                        data_source = r.get("data_source") or "placeholder"
                         await conn.execute(
                             query, r.get("symbol", ""), d,
                             r.get("futures_oi"), r.get("futures_oi_change_pct"),
@@ -979,6 +986,7 @@ class TimeSeriesStore:
                             r.get("options_max_pain_strike"), r.get("iv_atm_pct"),
                             r.get("iv_percentile_1y"), r.get("pcr_index_level"),
                             r.get("is_placeholder", False),
+                            data_source,
                         )
                         count += 1
                     except Exception as e:
@@ -986,14 +994,22 @@ class TimeSeriesStore:
         return count
 
     async def get_derivatives(
-        self, symbol: str, limit: int = 500,
+        self, symbol: str, limit: int = 500, real_data_only: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Get derivatives data for a symbol."""
+        """Get derivatives data for a symbol. If real_data_only=True, exclude placeholder rows (data_source='placeholder')."""
         async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT * FROM derivatives_daily WHERE symbol = $1 ORDER BY date DESC LIMIT $2",
-                symbol, limit,
-            )
+            if real_data_only:
+                rows = await conn.fetch(
+                    """SELECT * FROM derivatives_daily
+                       WHERE symbol = $1 AND (data_source IS NULL OR data_source != 'placeholder')
+                       ORDER BY date DESC LIMIT $2""",
+                    symbol, limit,
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT * FROM derivatives_daily WHERE symbol = $1 ORDER BY date DESC LIMIT $2",
+                    symbol, limit,
+                )
             return [dict(r) for r in rows]
 
     # ========================
@@ -1075,6 +1091,10 @@ class TimeSeriesStore:
         params.append(int(limit))
         limit_idx = len(params)
         query = f"SELECT * FROM intraday_metrics WHERE {where} ORDER BY timestamp DESC LIMIT ${limit_idx}"
+        where_sql = " AND ".join(conditions)
+        # Bind LIMIT as a parameter instead of interpolating it
+        query = f"SELECT * FROM intraday_metrics WHERE {where_sql} ORDER BY timestamp DESC LIMIT ${idx}"
+        params.append(int(limit))
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(query, *params)
             return [dict(r) for r in rows]
@@ -1376,6 +1396,17 @@ class TimeSeriesStore:
                 row_count = await conn.fetchval(
                     "SELECT reltuples::bigint FROM pg_class WHERE relname = $1", table
                 )
+            tables = [
+                "prices_daily", "derived_metrics_daily", "technical_indicators",
+                "ml_features_daily", "risk_metrics", "valuation_daily",
+                "fundamentals_quarterly", "shareholding_quarterly",
+                "corporate_actions", "macro_indicators", "derivatives_daily",
+                "intraday_metrics", "weekly_metrics", "schema_migrations",
+            ]
+            # Table names are drawn from a hard-coded whitelist above (not user input),
+            # so string interpolation here is safe from SQL injection.
+            for table in tables:
+                row_count = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")
                 size = await conn.fetchval(
                     "SELECT pg_size_pretty(pg_total_relation_size($1::regclass))", table
                 )

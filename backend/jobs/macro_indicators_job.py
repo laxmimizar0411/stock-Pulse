@@ -155,6 +155,27 @@ async def run_macro_indicators_job(ts_store, days: int = 90) -> int:
     count = await _upsert_with_retry()
     logger.info("Macro indicators: upserted %s records", count)
     return count
+    # Retry transient failures when writing to PostgreSQL
+    attempts = 0
+    last_exc: Optional[BaseException] = None
+    while attempts < 3:
+        try:
+            count = await ts_store.upsert_macro_indicators(records)
+            logger.info("Macro indicators: upserted %s records", count)
+            last_exc = None
+            return count
+        except Exception as e:
+            attempts += 1
+            last_exc = e
+            delay = 0.5 * (2 ** (attempts - 1))
+            logger.warning(
+                "upsert_macro_indicators failed (attempt %s/3), retrying in %.2fs: %s",
+                attempts, delay, e,
+            )
+            await asyncio.sleep(delay)
+
+    logger.error("upsert_macro_indicators failed after retries", exc_info=last_exc)
+    raise last_exc
 
 
 async def main():

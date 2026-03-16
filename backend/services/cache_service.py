@@ -373,7 +373,7 @@ class CacheService:
                 stats["redis_memory_used"] = info.get("used_memory_human", "N/A")
                 stats["redis_keys"] = self._redis.dbsize()
             except Exception:
-                pass
+                logger.warning("Failed to collect Redis stats", exc_info=True)
         else:
             stats["in_memory_keys"] = len(self._fallback_cache)
 
@@ -385,7 +385,7 @@ class CacheService:
             try:
                 self._redis.close()
             except Exception:
-                pass
+                logger.warning("Error closing Redis connection", exc_info=True)
 
     # ========================
     # HASH — per-field stock data

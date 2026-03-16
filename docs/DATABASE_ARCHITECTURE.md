@@ -313,13 +313,16 @@ services:
 
 ## 3. Pending / Incomplete Work
 
-### 3.1 Placeholder Derivatives Data
+### 3.1 Placeholder Derivatives Data — Addressed (status indicator)
 
 **File:** `backend/jobs/derivatives_job.py` (line 194)
 
-When NSE F&O bhavcopy data is unavailable, the job creates **placeholder rows** with NULL fields in the `derivatives_daily` table. This means the derivatives table may contain rows with no actual F&O data until real bhavcopy files are sourced.
+When NSE F&O bhavcopy data is unavailable, the job creates **placeholder rows** with NULL fields in the `derivatives_daily` table. A **status indicator** is now implemented:
 
-**What's Missing:** Reliable NSE F&O data source; status indicator to distinguish placeholder vs. real records.
+- **`derivatives_daily.data_source`** column: `'nse_bhavcopy'` = real F&O from NSE bhavcopy; `'placeholder'` = fallback row (no F&O data). Consumers can filter by `data_source` or use the API query `real_data_only=true` to exclude placeholders.
+- **Migration:** `setup_databases.py` adds the column on existing DBs and backfills `nse_bhavcopy` where any F&O field is non-null.
+
+**Remaining:** Reliable NSE F&O data source (archives.nseindia.com) remains the primary source; no alternative provider added yet.
 
 ### 3.2 Mock Disruption Risk in Scoring Engine
 
@@ -334,59 +337,139 @@ The disruption risk assessment defaults to "Low" for all companies — no actual
 
 **What's Missing:** Real disruption risk model based on industry trends, competition, technology shifts.
 
-### 3.3 PDF Service — Optional Dependency
+### 3.3 PDF Service — Optional Dependency (Addressed)
 
 **File:** `backend/services/pdf_service.py` (lines 29-42)
 
-PDF report generation provides stub classes when ReportLab is not installed. The feature is non-functional without the dependency.
+PDF report generation uses ReportLab when installed and exposes `is_pdf_available()`; if ReportLab is missing, stub classes are used and the `/reports/generate-pdf` endpoint returns 503 with a clear message.
 
-**What's Missing:** ReportLab dependency in production requirements, or alternative PDF generation approach.
+- **Dependency:** `reportlab` is now explicitly present in `backend/requirements.txt` under `# PDF Generation`. In production, installing these requirements makes the feature fully functional; in dev it degrades gracefully.
+- **Behavior:** Clients can detect availability via the 503 error or by calling internal helpers.
 
-### 3.4 Backtesting Service — Optional Dependency
+### 3.4 Backtesting Service — Optional Dependency (Feature flag added)
 
-**File:** `backend/server.py` (lines 1625-1636)
+**File:** `backend/server.py` (lines 1621-1672)
 
-Backtesting endpoints return 503 when the backtesting service module is unavailable. Stub classes prevent import errors but the feature is disabled.
+Backtesting imports `services/backtesting_service` and `models/backtest_models` and exposes three endpoints. A clear **feature flag** has been added:
 
-**What's Missing:** Backtesting service as a required dependency, or clear feature flag system.
+- **Env flag:** `BACKTESTING_ENABLED` (default: `true`). If set to `false`/`0`/`no`, `BACKTEST_AVAILABLE` is forced to `False` even when imports succeed.
+- **Behavior when disabled or missing deps:** All backtest endpoints return HTTP 503 with guidance: *"Ensure BACKTESTING_ENABLED is true and dependencies are installed."*
 
-### 3.5 No Formal Migration System
+This makes backtesting clearly controllable per environment while remaining optional in deployments that don't need it.
 
-**File:** `backend/setup_databases.py`
+### 3.5 Schema Migrations — Lightweight Framework + Alembic Baseline
 
-While a `schema_migrations` table exists for tracking, there is no formal migration framework (e.g., Alembic, golang-migrate). Schema changes are applied via `CREATE TABLE IF NOT EXISTS` which cannot handle column additions, renames, or type changes.
+**Files:** `backend/setup_databases.py`, `alembic.ini`, `backend/alembic/*`
 
-**What's Missing:** A migration tool (Alembic recommended for async Python + PostgreSQL) to manage schema evolution.
+The project now has two complementary layers for schema migrations:
 
-### 3.6 No PostgreSQL Backup Strategy
+- **Lightweight in-app framework (existing):**
+  - `POSTGRESQL_SCHEMA` still creates all tables using `CREATE TABLE IF NOT EXISTS`, including `schema_migrations` and an initial version row `v1.0.0`.
+  - A `MIGRATIONS` list defines ordered migrations as `(version, description, sql)` tuples (e.g. `v1.1.0_derivatives_data_source` for `derivatives_daily.data_source`).
+  - `setup_postgresql()` applies each migration transactionally if its `version` is not yet present in `schema_migrations`.
 
-MongoDB has a backup script (`backend/scripts/backup_mongodb.py`), but PostgreSQL has **no equivalent backup mechanism**. No `pg_dump` automation, no WAL archiving, no point-in-time recovery setup.
+- **Alembic baseline (for future evolution):**
+  - `alembic.ini` + `backend/alembic/env.py` configure Alembic to use `TIMESERIES_DSN` for the PostgreSQL URL.
+  - `backend/alembic/versions/v1_0_0_baseline.py` is a no-op baseline revision that treats the current schema as Alembic version `v1_0_0_baseline`.
+  - Future schema changes should be added as new Alembic revisions under `backend/alembic/versions/`, enabling version-controlled, reversible migrations (and offline SQL generation when needed).
 
-**What's Missing:** PostgreSQL backup script, WAL archiving configuration, backup rotation.
+In practice, `setup_databases.py` remains the primary initializer for dev/test environments, while Alembic provides a production-ready path for ongoing schema evolution.
 
-### 3.7 Missing ML Features Pipeline
+### 3.6 PostgreSQL Backup Strategy — Implemented
 
-The `ml_features_daily` table (20 fields for volatility, momentum, macro context, sentiment) exists in PostgreSQL but there is **no background job** that populates it. The table schema is defined but no writer job is implemented.
+- **Backup Script:** `backend/scripts/backup_postgres.py`
+  - Uses `pg_dump` against `TIMESERIES_DSN` to create timestamped logical backups (custom format), with optional gzip compression and automatic rotation (keep last N files, default 7).
+  - Usage examples:
+    - `python scripts/backup_postgres.py` — default backup to `./backups/postgres`, keep 7 copies.
+    - `python scripts/backup_postgres.py --keep 14` — keep 14 copies.
+    - `python scripts/backup_postgres.py --output /mnt/backups/pg` — custom directory.
+    - `python scripts/backup_postgres.py --check` — verify `pg_dump` and paths only.
 
-**What's Missing:** Background job to compute and upsert ML features from raw data.
+- **WAL / PITR (operational note):**
+  - For full point-in-time recovery, production operators should also enable PostgreSQL WAL archiving (e.g. `archive_mode=on`, `archive_command` to ship WAL to durable storage) and schedule this script via cron or a job runner.
+  - This repo does not hard-code `postgresql.conf`, but the backup script and env-based DSN are designed to integrate with such a WAL/PITR setup.
 
-### 3.8 Missing Valuation Pipeline
+### 3.7 ML Features Pipeline — Implemented (Baseline Job)
 
-The `valuation_daily` table (18 fields for P/E, P/B, EV/EBITDA, dividend yield, FCF yield) exists but there is **no dedicated job** to populate it from fundamental data.
+The `ml_features_daily` table (20+ fields for volatility, momentum, macro context, sentiment) now has a **baseline background job**:
 
-**What's Missing:** Background job to compute daily valuation metrics from quarterly fundamentals.
+- **Job:** `backend/jobs/ml_features_job.py`
+  - Reads `prices_daily` for the last N days (default 60) and derives:
+    - `realized_volatility_10d`, `realized_volatility_20d` (std-dev of daily returns)
+    - `return_1d_pct`, `return_3d_pct`, `return_10d_pct`
+    - `price_vs_sma20_pct`, `price_vs_sma50_pct`
+    - `volume_zscore` (20-day window)
+    - `trading_day_of_week`
+  - Leaves more advanced context fields (`momentum_rank_sector`, macro/sentiment fields) as NULL for now, to be enriched by upstream ETL when available.
+  - Uses `TimeSeriesStore.upsert_ml_features()` for persistence.
 
-### 3.9 Missing Shareholding Pipeline
+- **API Trigger:** `POST /jobs/run/ml-features?days=60`
+  - Runs the job for the last `days` calendar days (max 365) and returns `{ job: "ml_features_daily", records_upserted: N }`.
 
-The `shareholding_quarterly` table (11 fields) exists but there is no data extraction pipeline to fetch and store shareholding pattern data.
+This provides a consistent, automated minimum ML feature set directly from raw price history, closing the previously identified gap in the pipeline.
 
-**What's Missing:** Extractor for BSE/NSE shareholding pattern data; quarterly job to populate the table.
+### 3.8 Valuation Pipeline — Implemented (Baseline Job)
 
-### 3.10 Missing Corporate Actions Pipeline
+The `valuation_daily` table now has a **baseline valuation job** that recomputes metrics from fundamentals and daily data:
 
-The `corporate_actions` table exists but has no dedicated extraction pipeline. Dividend, split, and bonus data is not being automatically ingested.
+- **Job:** `backend/jobs/valuation_job.py`
+  - For a target date or last N trading days, it:
+    - Reads latest `fundamentals_quarterly` per symbol (EPS, book value, FCF, net_profit, total_equity).
+    - Reads `derived_metrics_daily` snapshot for the same date(s) (price, market_cap, P/E, P/B, PS, dividend_yield, sector averages, etc.).
+    - Computes or backfills:
+      - `pe_ratio` (price/EPS when missing) and `earnings_yield` (1/PE),
+      - `pb_ratio` (price/book when missing),
+      - `fcf_yield` (FCF / market_cap when available),
+      - and uses existing EV/EBITDA / EV/Sales fields from daily metrics when present.
+  - Persists via `TimeSeriesStore.upsert_valuation()`.
 
-**What's Missing:** Corporate actions data source and extraction pipeline.
+- **API Trigger:** `POST /jobs/run/valuation`
+  - Query params:
+    - `date` (optional, `YYYY-MM-DD`) — recompute for a single trading date.
+    - `days` (optional) — recompute for last N trading days (based on `prices_daily`).
+  - Response: `{ job: "valuation_daily", records_upserted: N }`.
+
+This closes the gap by providing an automated, recomputable valuation layer that can be run periodically or on demand, independent of upstream extractors.
+
+### 3.9 Shareholding Pipeline — Implemented (MongoDB → PostgreSQL Sync)
+
+The `shareholding_quarterly` table (11 fields) is now populated via a dedicated job that syncs from the existing shareholding extraction:
+
+- **Extractor:** `backend/data_extraction/extractors/screener_extractor.py`
+  - Parses the Screener.in `#shareholding` section into `FinancialData.shareholding_history` (a list of period rows with Promoters/FIIs/DIIs/Public columns).
+  - This is already stored in MongoDB `stock_data.shareholding_history` by the extraction pipeline.
+
+- **Job:** `backend/jobs/shareholding_job.py`
+  - Reads `stock_data` documents from MongoDB with non-empty `shareholding_history` (optionally filtered by `--symbol`).
+  - Normalizes each history entry into `shareholding_quarterly` schema:
+    - Parses period labels like `Mar 2024` into `quarter_end` dates.
+    - Maps Promoters/FIIs/DIIs/Public percentages plus derived fields like `promoter_holding_change`, `fii_holding_change`, `num_shareholders`, `mf_holding`, `insurance_holding` when available.
+  - Upserts into PostgreSQL via `TimeSeriesStore.upsert_shareholding()`, keeping the latest ~8 quarters per symbol.
+
+- **API Trigger:** `POST /jobs/run/shareholding`
+  - Optional `symbol` query parameter restricts sync to a single stock.
+  - Response: `{ job: "shareholding_quarterly", records_upserted: N }`.
+
+Together with the existing Screener extractor, this provides a complete, automated shareholding pipeline from source HTML → MongoDB → PostgreSQL.
+
+### 3.10 Corporate Actions Pipeline — Implemented via Main Extraction Pipeline
+
+The `corporate_actions` table is now fed by the existing extraction + pipeline flow:
+
+- **Data model:** `backend/data_extraction/models/extraction_models.py`
+  - `StockDataRecord.corporate_actions` holds extracted corporate action fields (dividends, splits, bonuses, rights, buybacks, next_earnings_date, etc.).
+  - Cleaner/validation passes handle this category alongside others.
+
+- **Pipeline writer:** `backend/services/pipeline_service.py`
+  - When an extracted record contains corporate action fields (`dividend_per_share`, `stock_split_ratio`, `bonus_ratio`, `action_type`, etc.), the pipeline builds `corporate_records` and calls:
+    - `TimeSeriesStore.upsert_corporate_action(rec)` for each record.
+  - Logs `"pg_corporate_actions_upserted"` with the count written.
+
+- **Store + API:** `backend/services/timeseries_store.py` and `backend/server.py`
+  - `upsert_corporate_action()` persists into `corporate_actions` with appropriate conflict handling.
+  - `GET /timeseries/corporate-actions/{symbol}` exposes corporate actions from PostgreSQL.
+
+Corporate actions are therefore ingested automatically whenever the main extraction pipeline runs and emits those fields, so a separate dedicated job is not required.
 
 ---
 

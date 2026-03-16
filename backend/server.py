@@ -341,7 +341,8 @@ async def database_health_check():
                 "members": members,
             }
         except Exception:
-            pass  # Standalone or not a replica set
+            # Standalone or not a replica set; log at debug for diagnostics without breaking health
+            logger.debug("MongoDB replica set status check failed", exc_info=True)
         health["mongodb"] = mongo_health
     except Exception as e:
         health["mongodb"] = {"status": "error", "error": str(e)}
@@ -561,11 +562,12 @@ async def get_timeseries_macro_indicators(
 async def get_timeseries_derivatives(
     symbol: str,
     limit: int = Query(default=500, le=5000),
+    real_data_only: bool = Query(default=False, description="If true, exclude placeholder rows (only rows with data_source='nse_bhavcopy')"),
 ):
-    """Get F&O / derivatives data from PostgreSQL"""
+    """Get F&O / derivatives data from PostgreSQL. Each row includes data_source: 'nse_bhavcopy' (real F&O) or 'placeholder'."""
     if not _ts_store:
         raise HTTPException(status_code=503, detail="Time-series store not available")
-    data = await _ts_store.get_derivatives(symbol.upper(), limit=limit)
+    data = await _ts_store.get_derivatives(symbol.upper(), limit=limit, real_data_only=real_data_only)
     return {"symbol": symbol.upper(), "count": len(data), "data": data}
 
 
@@ -634,7 +636,7 @@ async def get_timeseries_shareholding(
     return {"symbol": symbol.upper(), "count": len(data), "data": data}
 
 
-# ==================== TIMESERIES JOBS (macro, derivatives, intraday) ====================
+# ==================== TIMESERIES JOBS (macro, derivatives, intraday, valuation, ml, shareholding) ====================
 @api_router.post("/jobs/run/macro-indicators")
 async def run_macro_indicators_job(days: int = Query(default=90, le=365)):
     """Trigger macro indicators job: fetch USD/INR, commodities (yfinance) and optional RBI data, upsert to PostgreSQL."""
@@ -685,6 +687,59 @@ async def run_intraday_metrics_job(days: int = Query(default=1, le=30)):
         return {"job": "intraday_metrics", "records_upserted": count}
     except Exception as e:
         logger.exception("Intraday metrics job failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/jobs/run/valuation")
+async def run_valuation_job(
+    date: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+    days: Optional[int] = Query(default=None, description="Process last N trading days"),
+):
+    """Trigger valuation job: recompute valuation_daily from fundamentals_quarterly and derived_metrics_daily."""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    try:
+        from jobs.valuation_job import run_valuation_job as _run
+        target_date = None
+        if date:
+            try:
+                target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        count = await _run(_ts_store, target_date=target_date, days=days)
+        return {"job": "valuation_daily", "records_upserted": count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Valuation job failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/jobs/run/ml-features")
+async def run_ml_features_job(days: int = Query(default=60, le=365)):
+    """Trigger ML features job: derive volatility/return features from prices_daily and upsert to PostgreSQL."""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    try:
+        from jobs.ml_features_job import run_ml_features_job as _run
+        count = await _run(_ts_store, days=days)
+        return {"job": "ml_features_daily", "records_upserted": count}
+    except Exception as e:
+        logger.exception("ML features job failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/jobs/run/shareholding")
+async def run_shareholding_job(symbol: Optional[str] = Query(default=None, description="Optional symbol filter")):
+    """Trigger shareholding job: sync shareholding_quarterly from MongoDB stock_data.shareholding_history."""
+    if not _ts_store:
+        raise HTTPException(status_code=503, detail="Time-series store not available")
+    try:
+        from jobs.shareholding_job import run_shareholding_job as _run
+        count = await _run(_ts_store, symbol=symbol)
+        return {"job": "shareholding_quarterly", "records_upserted": count}
+    except Exception as e:
+        logger.exception("Shareholding job failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1618,12 +1673,14 @@ async def search_stocks(q: str = Query(..., min_length=1)):
 
 
 # ==================== BACKTESTING ====================
+# Backtesting can be toggled via env flag BACKTESTING_ENABLED (default: true).
+_BACKTEST_FLAG = os.getenv("BACKTESTING_ENABLED", "true").lower() not in ("0", "false", "no")
 try:
     from services.backtesting_service import (
         run_backtest, get_available_strategies, get_strategy_info
     )
     from models.backtest_models import BacktestConfig, StrategyType
-    BACKTEST_AVAILABLE = True
+    BACKTEST_AVAILABLE = _BACKTEST_FLAG
 except ImportError as e:
     logger.warning(f"Backtesting service not available: {e}")
     BACKTEST_AVAILABLE = False
@@ -1640,7 +1697,10 @@ except ImportError as e:
 async def list_strategies():
     """Get list of available backtesting strategies"""
     if not BACKTEST_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Backtesting service not available")
+        raise HTTPException(
+            status_code=503,
+            detail="Backtesting service not available. Ensure BACKTESTING_ENABLED is true and dependencies are installed.",
+        )
     
     strategies = get_available_strategies()
     return [s.model_dump() for s in strategies]
@@ -1650,7 +1710,10 @@ async def list_strategies():
 async def get_strategy(strategy_id: str):
     """Get details for a specific strategy"""
     if not BACKTEST_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Backtesting service not available")
+        raise HTTPException(
+            status_code=503,
+            detail="Backtesting service not available. Ensure BACKTESTING_ENABLED is true and dependencies are installed.",
+        )
     
     try:
         strategy_type = StrategyType(strategy_id)
@@ -1668,7 +1731,10 @@ async def get_strategy(strategy_id: str):
 async def run_backtest_endpoint(config: BacktestConfig):
     """Run a backtest with the specified configuration"""
     if not BACKTEST_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Backtesting service not available")
+        raise HTTPException(
+            status_code=503,
+            detail="Backtesting service not available. Ensure BACKTESTING_ENABLED is true and dependencies are installed.",
+        )
     
     symbol = config.symbol.upper()
     stocks = get_cached_stocks()

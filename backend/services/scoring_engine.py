@@ -1442,8 +1442,65 @@ def generate_investment_checklists(stock_data: Dict) -> Dict:
     })
     
     # 11. [DEAL-BREAKER] Company is not facing existential disruption threat
-    # Mock - assume most companies pass
-    disruption_risk = stock_data.get("disruption_risk", "Low")
+    # Use qualitative disruption_risk when available, otherwise derive a heuristic based on
+    # industry/sector and basic business trends (growth + margin trajectory).
+    disruption_risk = stock_data.get("disruption_risk")
+    if not disruption_risk:
+        sector = (stock_data.get("sector") or stock_data.get("industry") or "").lower()
+        revenue_growth = stock_data.get("revenue_growth_yoy")
+        operating_margin = stock_data.get("operating_margin")
+        op_margin_declining_years = stock_data.get("operating_margin_declining_years", 0) or 0
+
+        risk_score = 0
+
+        # Sector/industry pattern-based priors
+        legacy_high_risk_keywords = [
+            "newspaper", "print", "publishing", "cable", "broadcast", "dvd", "cd",
+            "landline", "wireline", "physical retail", "brick and mortar", "coal",
+            "thermal power", "photo film",
+        ]
+        moderate_risk_keywords = [
+            "auto ancillaries", "auto oem", "discretionary retail", "telecom",
+            "traditional media", "industrial manufacturing",
+        ]
+        beneficiary_keywords = [
+            "software", "saas", "it services", "internet", "platform", "e-commerce",
+            "digital", "cloud", "semiconductor",
+        ]
+
+        if any(k in sector for k in legacy_high_risk_keywords):
+            risk_score += 2
+        if any(k in sector for k in moderate_risk_keywords):
+            risk_score += 1
+        if any(k in sector for k in beneficiary_keywords):
+            risk_score -= 1
+
+        # Business trajectory: structurally weak + no growth can indicate disruption pressure
+        try:
+            if revenue_growth is not None:
+                if revenue_growth < 0:
+                    risk_score += 1
+                if revenue_growth <= -10:
+                    risk_score += 1
+        except TypeError:
+            pass
+
+        try:
+            if operating_margin is not None and operating_margin < 5:
+                risk_score += 1
+        except TypeError:
+            pass
+
+        if op_margin_declining_years >= 2:
+            risk_score += 1
+
+        if risk_score >= 3:
+            disruption_risk = "High"
+        elif risk_score >= 1:
+            disruption_risk = "Medium"
+        else:
+            disruption_risk = "Low"
+
     no_disruption = disruption_risk != "High"
     long_term_checklist.append({
         "id": "LT11",
