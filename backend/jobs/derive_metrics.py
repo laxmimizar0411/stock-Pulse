@@ -34,6 +34,27 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 logger = logging.getLogger(__name__)
 
 
+async def _retry_async(op_name: str, coro, max_attempts: int = 3, base_delay: float = 0.5) -> Any:
+    """
+    Simple retry helper with exponential backoff for transient failures.
+    Logs warnings on retries and re-raises the last exception on failure.
+    """
+    attempt = 0
+    last_exc: Optional[BaseException] = None
+    while attempt < max_attempts:
+        try:
+            return await coro()
+        except Exception as e:
+            last_exc = e
+            attempt += 1
+            if attempt >= max_attempts:
+                logger.error("%s failed after %s attempts", op_name, attempt, exc_info=e)
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            logger.warning("%s failed (attempt %s/%s), retrying in %.2fs: %s",
+                           op_name, attempt, max_attempts, delay, e)
+            await asyncio.sleep(delay)
+
 async def compute_derived_metrics(
     ts_store,
     symbols: Optional[List[str]] = None,
@@ -77,8 +98,20 @@ async def compute_derived_metrics(
 
     for symbol in all_symbols:
         try:
-            # Fetch price history
-            prices = await ts_store.get_prices(symbol, limit=lookback_days)
+            # Use a PostgreSQL advisory lock per symbol to prevent concurrent
+            # derive_metrics runs from processing the same symbol at once.
+            async with ts_store._pool.acquire() as conn:
+                lock_key = hash(symbol) & 0x7FFFFFFF  # 31-bit positive key
+                await conn.execute("SELECT pg_advisory_lock($1)", lock_key)
+                try:
+                    # Fetch price history with retry
+                    prices = await _retry_async(
+                        f"get_prices({symbol})",
+                        lambda: ts_store.get_prices(symbol, limit=lookback_days),
+                    )
+                finally:
+                    await conn.execute("SELECT pg_advisory_unlock($1)", lock_key)
+
             if len(prices) < 2:
                 continue
 
@@ -141,7 +174,10 @@ async def compute_derived_metrics(
                 derived_records.append(rec)
 
             if derived_records:
-                count = await ts_store.upsert_derived_metrics(derived_records)
+                count = await _retry_async(
+                    f"upsert_derived_metrics({symbol})",
+                    lambda: ts_store.upsert_derived_metrics(derived_records),
+                )
                 total_upserted += count
 
         except Exception as e:
@@ -180,8 +216,11 @@ async def compute_weekly_metrics(
 
     for symbol in all_symbols:
         try:
-            # Fetch enough daily data to compute weekly aggregates
-            prices = await ts_store.get_prices(symbol, limit=weeks * 7)
+            # Fetch enough daily data to compute weekly aggregates (with retry)
+            prices = await _retry_async(
+                f"get_prices_weekly({symbol})",
+                lambda: ts_store.get_prices(symbol, limit=weeks * 7),
+            )
             if len(prices) < 50:
                 continue
 
@@ -228,7 +267,10 @@ async def compute_weekly_metrics(
                 })
 
             if records:
-                count = await ts_store.upsert_weekly_metrics(records)
+                count = await _retry_async(
+                    f"upsert_weekly_metrics({symbol})",
+                    lambda: ts_store.upsert_weekly_metrics(records),
+                )
                 total += count
 
         except Exception as e:

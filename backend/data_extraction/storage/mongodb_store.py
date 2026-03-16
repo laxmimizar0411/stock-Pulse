@@ -99,8 +99,25 @@ class MongoDBStore:
     async def get_all_symbols(self) -> List[str]:
         """Get list of all symbols in the database."""
         cursor = self.stock_data.find({}, {"symbol": 1, "_id": 0})
-        docs = await cursor.to_list(length=5000)
-        return [d["symbol"] for d in docs]
+        symbols: List[str] = []
+        batch_size = 2000
+        total_fetched = 0
+
+        while True:
+            batch = await cursor.to_list(length=batch_size)
+            if not batch:
+                break
+            symbols.extend(d["symbol"] for d in batch if "symbol" in d)
+            total_fetched += len(batch)
+
+            # Safety hard-cap to avoid unbounded memory in extreme cases
+            if total_fetched >= 100_000:
+                logger.warning(
+                    "get_all_symbols reached hard cap of 100000 symbols; results may be truncated"
+                )
+                break
+
+        return symbols
 
     async def get_stocks_by_filter(
         self,
@@ -150,18 +167,48 @@ class MongoDBStore:
 
         count = 0
         # Batch in chunks of 500
+        from pymongo import UpdateOne
+
         for i in range(0, len(operations), 500):
-            batch = operations[i:i + 500]
-            try:
-                from pymongo import UpdateOne
-                bulk_ops = [
-                    UpdateOne(op["filter"], op["update"], upsert=op["upsert"])
-                    for op in batch
-                ]
-                result = await self.price_history.bulk_write(bulk_ops)
-                count += result.upserted_count + result.modified_count
-            except Exception as e:
-                logger.error(f"Error upserting price history for {symbol}: {e}")
+            batch = operations[i : i + 500]
+            bulk_ops = [
+                UpdateOne(op["filter"], op["update"], upsert=op["upsert"])
+                for op in batch
+            ]
+
+            # Idempotent retry per batch: upserts can be safely retried.
+            # If all retries fail for a batch, raise so the caller knows
+            # the overall write was only partially successful.
+            last_error: Optional[Exception] = None
+            for attempt in range(3):
+                try:
+                    result = await self.price_history.bulk_write(
+                        bulk_ops,
+                        ordered=False,
+                    )
+                    count += result.upserted_count + result.modified_count
+                    last_error = None
+                    break
+                except Exception as e:
+                    last_error = e
+                    logger.warning(
+                        "Error upserting price history batch %s-%s for %s (attempt %s): %s",
+                        i,
+                        i + len(batch) - 1,
+                        symbol,
+                        attempt + 1,
+                        e,
+                    )
+            if last_error is not None:
+                # Surface the failure so the pipeline can decide whether to retry
+                logger.error(
+                    "Failed to upsert price history batch %s-%s for %s after retries",
+                    i,
+                    i + len(batch) - 1,
+                    symbol,
+                    exc_info=last_error,
+                )
+                raise last_error
 
         return count
 

@@ -3,9 +3,9 @@
 Derivatives (F&O) Job for StockPulse.
 
 Populates PostgreSQL derivatives_daily from:
-1. NSE F&O bhavcopy when available (archives.nseindia.com).
-2. Fallback: one row per symbol per date from prices_daily with NULL F&O fields,
-   so the table is queryable and ready for real F&O data.
+1. NSE F&O bhavcopy when available (archives.nseindia.com) — rows marked data_source='nse_bhavcopy'.
+2. Fallback: one row per symbol per date from prices_daily with NULL F&O fields — data_source='placeholder',
+   so the table is queryable and consumers can filter by data_source for real vs placeholder records.
 
 Usage:
     python -m jobs.derivatives_job              # Today / last trading day
@@ -39,6 +39,10 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Referer": "https://www.nseindia.com/",
 }
+
+# data_source values for derivatives_daily: distinguish real F&O data vs placeholder rows
+DATA_SOURCE_NSE_BHAVCOPY = "nse_bhavcopy"
+DATA_SOURCE_PLACEHOLDER = "placeholder"
 
 
 def _safe_float(v: Any) -> Optional[float]:
@@ -133,6 +137,7 @@ async def _fetch_nse_fo_bhavcopy(target_date: date) -> Optional[List[Dict[str, A
                     "iv_atm_pct": None,
                     "iv_percentile_1y": None,
                     "pcr_index_level": None,
+                    "data_source": DATA_SOURCE_NSE_BHAVCOPY,
                 }
             rec = by_symbol[sym]
             open_int = _safe_int(row.get("OPEN_INT") or row.get("Open_Interest") or row.get("OPEN_INTEGER"))
@@ -180,6 +185,7 @@ async def _fallback_from_prices(ts_store, target_dates: List[date]) -> List[Dict
                     "iv_atm_pct": None,
                     "iv_percentile_1y": None,
                     "pcr_index_level": None,
+                    "data_source": DATA_SOURCE_PLACEHOLDER,
                 })
     return records
 
@@ -214,8 +220,27 @@ async def run_derivatives_job(
             if records:
                 logger.info("Derivatives: using fallback from prices_daily for %s (%s symbols)", d, len(records))
         if records:
-            n = await ts_store.upsert_derivatives(records)
-            total += n
+            # Retry transient failures when writing to PostgreSQL
+            attempts = 0
+            last_exc: Optional[BaseException] = None
+            while attempts < 3:
+                try:
+                    n = await ts_store.upsert_derivatives(records)
+                    total += n
+                    last_exc = None
+                    break
+                except Exception as e:
+                    attempts += 1
+                    last_exc = e
+                    delay = 0.5 * (2 ** (attempts - 1))
+                    logger.warning(
+                        "upsert_derivatives failed for %s (attempt %s/3), retrying in %.2fs: %s",
+                        d, attempts, delay, e,
+                    )
+                    await asyncio.sleep(delay)
+            if last_exc is not None:
+                logger.error("upsert_derivatives failed for %s after retries", d, exc_info=last_exc)
+                raise last_exc
     return total
 
 

@@ -358,6 +358,7 @@ CREATE TABLE IF NOT EXISTS macro_indicators (
 CREATE INDEX IF NOT EXISTS idx_macro_date ON macro_indicators (date DESC);
 
 -- 11. Derivatives / F&O Data (Fields #257-270)
+-- data_source: 'nse_bhavcopy' = real F&O from NSE bhavcopy, 'placeholder' = fallback row (no F&O data)
 CREATE TABLE IF NOT EXISTS derivatives_daily (
     symbol                      VARCHAR(20)     NOT NULL,
     date                        DATE            NOT NULL,
@@ -375,6 +376,7 @@ CREATE TABLE IF NOT EXISTS derivatives_daily (
     iv_atm_pct                  NUMERIC(8,4),
     iv_percentile_1y            NUMERIC(6,2),
     pcr_index_level             NUMERIC(8,4),
+    data_source                 VARCHAR(32)     DEFAULT 'placeholder',
     created_at                  TIMESTAMPTZ     DEFAULT now(),
     PRIMARY KEY (symbol, date)
 );
@@ -428,6 +430,29 @@ INSERT INTO schema_migrations (version, description)
 VALUES ('v1.0.0', 'Initial schema with all 14 tables')
 ON CONFLICT (version) DO NOTHING;
 """
+
+# Migration: derivatives_daily.data_source (placeholder vs real F&O)
+# Safe to run on existing DBs: adds column and index, backfills real data as nse_bhavcopy
+DERIVATIVES_DATA_SOURCE_MIGRATION = """
+ALTER TABLE derivatives_daily ADD COLUMN IF NOT EXISTS data_source VARCHAR(32) DEFAULT 'placeholder';
+CREATE INDEX IF NOT EXISTS idx_deriv_data_source ON derivatives_daily (data_source);
+UPDATE derivatives_daily SET data_source = 'nse_bhavcopy'
+WHERE data_source = 'placeholder' AND (
+    futures_oi IS NOT NULL OR futures_price_near IS NOT NULL OR options_call_oi_total IS NOT NULL
+    OR options_put_oi_total IS NOT NULL OR put_call_ratio_oi IS NOT NULL
+);
+"""
+
+
+# Ordered list of schema migrations applied after the base schema.
+# Each migration is (version, description, sql).
+MIGRATIONS = [
+    (
+        "v1.1.0_derivatives_data_source",
+        "derivatives_daily.data_source: nse_bhavcopy vs placeholder",
+        DERIVATIVES_DATA_SOURCE_MIGRATION,
+    ),
+]
 
 
 # ================================================================
@@ -692,6 +717,25 @@ async def setup_postgresql(check_only: bool = False) -> bool:
 
         # Execute the full schema (idempotent via IF NOT EXISTS)
         await conn.execute(POSTGRESQL_SCHEMA)
+
+        # Apply ordered schema migrations using schema_migrations table
+        # This provides a minimal, explicit migration framework without requiring Alembic.
+        for version, description, sql in MIGRATIONS:
+            already_applied = await conn.fetchval(
+                "SELECT 1 FROM schema_migrations WHERE version = $1",
+                version,
+            )
+            if already_applied:
+                logger.info(f"Migration {version} already applied")
+                continue
+            logger.info(f"Applying migration {version}: {description}")
+            async with conn.transaction():
+                await conn.execute(sql)
+                await conn.execute(
+                    "INSERT INTO schema_migrations (version, description) VALUES ($1, $2)",
+                    version,
+                    description,
+                )
 
         # Verify tables
         tables = await conn.fetch(

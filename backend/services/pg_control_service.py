@@ -60,6 +60,7 @@ class PgControlService:
             result["running"] = proc.returncode == 0
         except Exception:
             # Fallback: try pg_isready
+            logger.debug("pg_ctl status check failed, falling back to pg_isready", exc_info=True)
             try:
                 proc = await asyncio.create_subprocess_exec(
                     "pg_isready", "-q",
@@ -69,7 +70,7 @@ class PgControlService:
                 _, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
                 result["running"] = proc.returncode == 0
             except Exception:
-                pass
+                logger.debug("pg_isready status check failed", exc_info=True)
 
         # Check reachability via pool or direct connection
         if self._pool:

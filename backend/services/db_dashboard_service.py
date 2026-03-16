@@ -145,8 +145,8 @@ PG_TABLE_META = {
         "primary_key": "(date)",
     },
     "derivatives_daily": {
-        "description": "F&O data: futures OI, options PCR, IV, max pain",
-        "sources": ["NSE F&O", "Calculated"],
+        "description": "F&O data: futures OI, options PCR, IV, max pain. data_source: 'nse_bhavcopy' (real) or 'placeholder'",
+        "sources": ["NSE F&O bhavcopy", "Fallback from prices_daily (placeholder)"],
         "consumers": ["Stock Analyzer", "ML Models", "Derivatives Dashboard"],
         "primary_key": "(symbol, date)",
     },
@@ -512,12 +512,14 @@ class DatabaseDashboardService:
             return {"table": name, "total": 0, "documents": []}
 
         offset = (page - 1) * page_size
+        # name and order_by come from whitelisted mappings (not user input)
         order_by = PG_TABLE_ORDER_BY.get(name, "1 DESC")
         async with self.ts_store._pool.acquire() as conn:
             total = await conn.fetchval(f"SELECT COUNT(*) FROM {name}")
             rows = await conn.fetch(
                 f"SELECT * FROM {name} ORDER BY {order_by} LIMIT $1 OFFSET $2",
-                page_size, offset,
+                page_size,
+                offset,
             )
             docs = []
             for row in rows:
@@ -1310,22 +1312,25 @@ class DatabaseDashboardService:
         if limit > 200:
             limit = 200
 
-        # Only allow SELECT
-        sql_clean = sql.strip().upper()
-        if not sql_clean.startswith("SELECT"):
+        # Only allow a single SELECT statement (no semicolons, no multi-statement)
+        if ";" in sql:
+            raise ValueError("Multiple statements are not allowed")
+
+        sql_clean = sql.strip()
+        if not sql_clean.upper().startswith("SELECT"):
             raise ValueError("Only SELECT queries are allowed")
 
-        # Block dangerous keywords
-        for keyword in ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
-                        "CREATE", "TRUNCATE", "GRANT", "REVOKE", "EXEC"]:
-            if keyword in sql_clean.split("--")[0]:  # ignore comments
-                raise ValueError(f"'{keyword}' not allowed in read-only mode")
+        # Hard limit on text length to avoid abuse
+        if len(sql_clean) > 4000:
+            raise ValueError("Query too long")
 
         try:
             async with self.ts_store._pool.acquire() as conn:
-                # Use a read-only transaction
+                # Set a per-query statement timeout (e.g., 5 seconds) and run in read-only tx
+                await conn.execute("SET LOCAL statement_timeout = 5000")
                 async with conn.transaction(readonly=True):
-                    rows = await conn.fetch(f"{sql} LIMIT {limit}")
+                    query = f"SELECT * FROM ({sql_clean}) AS subq LIMIT $1"
+                    rows = await conn.fetch(query, limit)
                     if not rows:
                         return {"sql": sql, "columns": [], "rows": [], "returned": 0}
                     columns = list(rows[0].keys())
@@ -1365,17 +1370,29 @@ class DatabaseDashboardService:
         # MongoDB
         try:
             stats = await self.db.command("dbStats")
+            collections = await self.db.list_collection_names()
+            # Count documents in all collections in parallel to avoid N+1 latency
+            import asyncio
+
+            counts = await asyncio.gather(
+                *[self.db[c].count_documents({}) for c in collections],
+                return_exceptions=True,
+            )
+            total_docs = 0
+            for c in counts:
+                if isinstance(c, Exception):
+                    logger.warning("Error counting documents in MongoDB collection", exc_info=c)
+                    continue
+                total_docs += int(c or 0)
+
             snapshot["mongodb"] = {
                 "data_size_mb": round(stats.get("dataSize", 0) / (1024 * 1024), 2),
                 "storage_size_mb": round(stats.get("storageSize", 0) / (1024 * 1024), 2),
                 "index_size_mb": round(stats.get("indexSize", 0) / (1024 * 1024), 2),
-                "total_docs": sum(
-                    [await self.db[c].count_documents({})
-                     for c in await self.db.list_collection_names()]
-                ),
+                "total_docs": total_docs,
             }
         except Exception:
-            pass
+            logger.warning("Failed to collect MongoDB size stats", exc_info=True)
 
         # PostgreSQL
         if self.ts_store and self.ts_store._is_initialized:
