@@ -202,6 +202,8 @@ class TimeSeriesStore:
                 idx += 1
 
         where = " AND ".join(conditions)
+        params.append(int(limit))
+        limit_idx = len(params)
         query = f"""
             SELECT symbol, date, open, high, low, close, adjusted_close, last, prev_close,
                    volume, turnover, total_trades, delivery_qty, delivery_pct,
@@ -209,9 +211,9 @@ class TimeSeriesStore:
             FROM prices_daily
             WHERE {where}
             ORDER BY date DESC
-            LIMIT {limit}
+            LIMIT ${limit_idx}
         """
-        
+
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(query, *params)
             return [dict(r) for r in rows]
@@ -240,7 +242,7 @@ class TimeSeriesStore:
         Uses plain-Postgres aggregation from prices_daily (no TimescaleDB required).
         Each week starts on Monday (ISO week). Open = first day's open, Close = last day's close.
         """
-        query = f"""
+        query = """
             SELECT
                 $1::text AS symbol,
                 date_trunc('week', date)::date AS date,
@@ -253,11 +255,11 @@ class TimeSeriesStore:
             WHERE symbol = $1
             GROUP BY date_trunc('week', date)
             ORDER BY date DESC
-            LIMIT {limit}
+            LIMIT $2
         """
         try:
             async with self._pool.acquire() as conn:
-                rows = await conn.fetch(query, symbol)
+                rows = await conn.fetch(query, symbol, int(limit))
                 return [dict(r) for r in rows]
         except Exception as e:
             logger.warning(f"Failed to aggregate weekly prices: {e}")
@@ -271,7 +273,7 @@ class TimeSeriesStore:
         Uses plain-Postgres aggregation from prices_daily (no TimescaleDB required).
         Open = first day's open, Close = last day's close.
         """
-        query = f"""
+        query = """
             SELECT
                 $1::text AS symbol,
                 date_trunc('month', date)::date AS date,
@@ -284,11 +286,11 @@ class TimeSeriesStore:
             WHERE symbol = $1
             GROUP BY date_trunc('month', date)
             ORDER BY date DESC
-            LIMIT {limit}
+            LIMIT $2
         """
         try:
             async with self._pool.acquire() as conn:
-                rows = await conn.fetch(query, symbol)
+                rows = await conn.fetch(query, symbol, int(limit))
                 return [dict(r) for r in rows]
         except Exception as e:
             logger.warning(f"Failed to aggregate monthly prices: {e}")
@@ -614,6 +616,10 @@ class TimeSeriesStore:
             conditions.append(f"date <= ${idx}")
             params.append(_parse_date(end_date))
             idx += 1
+        where = " AND ".join(conditions)
+        params.append(int(limit))
+        limit_idx = len(params)
+        query = f"SELECT * FROM derived_metrics_daily WHERE {where} ORDER BY date DESC LIMIT ${limit_idx}"
         # Add LIMIT as a bound parameter to avoid string interpolation
         conditions_sql = " AND ".join(conditions)
         query = f"SELECT * FROM derived_metrics_daily WHERE {conditions_sql} ORDER BY date DESC LIMIT ${idx}"
@@ -941,6 +947,7 @@ class TimeSeriesStore:
                 futures_basis_pct, fii_index_futures_long_oi, fii_index_futures_short_oi,
                 options_call_oi_total, options_put_oi_total, put_call_ratio_oi,
                 put_call_ratio_volume, options_max_pain_strike, iv_atm_pct,
+                iv_percentile_1y, pcr_index_level, is_placeholder
                 iv_percentile_1y, pcr_index_level, data_source
             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
             ON CONFLICT (symbol, date) DO UPDATE SET
@@ -958,6 +965,7 @@ class TimeSeriesStore:
                 iv_atm_pct = EXCLUDED.iv_atm_pct,
                 iv_percentile_1y = EXCLUDED.iv_percentile_1y,
                 pcr_index_level = EXCLUDED.pcr_index_level,
+                is_placeholder = EXCLUDED.is_placeholder
                 data_source = EXCLUDED.data_source
         """
 
@@ -977,6 +985,7 @@ class TimeSeriesStore:
                             r.get("put_call_ratio_oi"), r.get("put_call_ratio_volume"),
                             r.get("options_max_pain_strike"), r.get("iv_atm_pct"),
                             r.get("iv_percentile_1y"), r.get("pcr_index_level"),
+                            r.get("is_placeholder", False),
                             data_source,
                         )
                         count += 1
@@ -1078,6 +1087,10 @@ class TimeSeriesStore:
             conditions.append(f"timestamp <= ${idx}")
             params.append(ts)
             idx += 1
+        where = " AND ".join(conditions)
+        params.append(int(limit))
+        limit_idx = len(params)
+        query = f"SELECT * FROM intraday_metrics WHERE {where} ORDER BY timestamp DESC LIMIT ${limit_idx}"
         where_sql = " AND ".join(conditions)
         # Bind LIMIT as a parameter instead of interpolating it
         query = f"SELECT * FROM intraday_metrics WHERE {where_sql} ORDER BY timestamp DESC LIMIT ${idx}"
@@ -1358,17 +1371,31 @@ class TimeSeriesStore:
             LEFT JOIN latest_risk r ON p.symbol = r.symbol
             {where}
             ORDER BY {sort_col} {sort_dir} NULLS LAST
-            LIMIT {limit}
+            LIMIT ${idx}
         """
+        params.append(int(limit))
 
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(query, *params)
             return [dict(r) for r in rows]
     
+    # Whitelist of valid table names for stats queries
+    _KNOWN_TABLES = frozenset([
+        "prices_daily", "derived_metrics_daily", "technical_indicators",
+        "ml_features_daily", "risk_metrics", "valuation_daily",
+        "fundamentals_quarterly", "shareholding_quarterly",
+        "corporate_actions", "macro_indicators", "derivatives_daily",
+        "intraday_metrics", "weekly_metrics", "schema_migrations",
+    ])
+
     async def get_stats(self) -> Dict[str, Any]:
         """Get database statistics for monitoring."""
         async with self._pool.acquire() as conn:
             stats = {}
+            for table in self._KNOWN_TABLES:
+                row_count = await conn.fetchval(
+                    "SELECT reltuples::bigint FROM pg_class WHERE relname = $1", table
+                )
             tables = [
                 "prices_daily", "derived_metrics_daily", "technical_indicators",
                 "ml_features_daily", "risk_metrics", "valuation_daily",
@@ -1381,9 +1408,9 @@ class TimeSeriesStore:
             for table in tables:
                 row_count = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")
                 size = await conn.fetchval(
-                    f"SELECT pg_size_pretty(pg_total_relation_size('{table}'))"
+                    "SELECT pg_size_pretty(pg_total_relation_size($1::regclass))", table
                 )
-                stats[table] = {"rows": row_count, "size": size}
+                stats[table] = {"rows": row_count or 0, "size": size}
             
             stats["pool"] = {
                 "size": self._pool.get_size(),

@@ -376,6 +376,7 @@ CREATE TABLE IF NOT EXISTS derivatives_daily (
     iv_atm_pct                  NUMERIC(8,4),
     iv_percentile_1y            NUMERIC(6,2),
     pcr_index_level             NUMERIC(8,4),
+    is_placeholder              BOOLEAN         DEFAULT FALSE,
     data_source                 VARCHAR(32)     DEFAULT 'placeholder',
     created_at                  TIMESTAMPTZ     DEFAULT now(),
     PRIMARY KEY (symbol, date)
@@ -718,6 +719,18 @@ async def setup_postgresql(check_only: bool = False) -> bool:
         # Execute the full schema (idempotent via IF NOT EXISTS)
         await conn.execute(POSTGRESQL_SCHEMA)
 
+        # Idempotent migrations for columns added after initial schema
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'derivatives_daily' AND column_name = 'is_placeholder'
+                ) THEN
+                    ALTER TABLE derivatives_daily ADD COLUMN is_placeholder BOOLEAN DEFAULT FALSE;
+                END IF;
+            END $$;
+        """)
         # Apply ordered schema migrations using schema_migrations table
         # This provides a minimal, explicit migration framework without requiring Alembic.
         for version, description, sql in MIGRATIONS:

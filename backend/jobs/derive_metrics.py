@@ -17,6 +17,7 @@ Can also be called programmatically after a pipeline run:
 
 import asyncio
 import argparse
+import hashlib
 import logging
 import os
 import sys
@@ -31,8 +32,16 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+from jobs import with_retry
+
 logger = logging.getLogger(__name__)
 
+
+def _symbol_lock_id(symbol: str) -> int:
+    """Generate a stable advisory lock ID from a symbol name."""
+    # Use first 8 bytes of hash as a signed 64-bit int for pg_advisory_lock
+    h = hashlib.sha256(f"derive_metrics:{symbol}".encode()).digest()
+    return int.from_bytes(h[:8], "big", signed=True)
 
 async def _retry_async(op_name: str, coro, max_attempts: int = 3, base_delay: float = 0.5) -> Any:
     """
@@ -96,8 +105,82 @@ async def compute_derived_metrics(
 
     total_upserted = 0
 
+    @with_retry(max_retries=3)
+    async def _process_symbol(sym: str) -> int:
+        """Compute and upsert derived metrics for a single symbol with advisory lock."""
+        lock_id = _symbol_lock_id(sym)
+        async with ts_store._pool.acquire() as conn:
+            # Try advisory lock — skip if another worker is processing this symbol
+            acquired = await conn.fetchval("SELECT pg_try_advisory_lock($1)", lock_id)
+            if not acquired:
+                logger.debug("Skipping %s — advisory lock held by another worker", sym)
+                return 0
+            try:
+                prices = await ts_store.get_prices(sym, limit=lookback_days)
+                if len(prices) < 2:
+                    return 0
+
+                prices.sort(key=lambda p: p["date"])
+
+                derived_records = []
+                closes = [float(p.get("close") or 0) for p in prices]
+                volumes = [int(p.get("volume") or 0) for p in prices]
+
+                for i, p in enumerate(prices):
+                    close = closes[i]
+                    if close <= 0:
+                        continue
+
+                    rec = {
+                        "symbol": sym,
+                        "date": p["date"].isoformat() if hasattr(p["date"], "isoformat") else str(p["date"]),
+                    }
+
+                    if i > 0 and closes[i - 1] > 0:
+                        rec["daily_return_pct"] = round((close - closes[i - 1]) / closes[i - 1] * 100, 4)
+
+                    for n, key in [(5, "return_5d_pct"), (20, "return_20d_pct"), (60, "return_60d_pct")]:
+                        if i >= n and closes[i - n] > 0:
+                            rec[key] = round((close - closes[i - n]) / closes[i - n] * 100, 4)
+
+                    high = float(p.get("high") or 0)
+                    low = float(p.get("low") or 0)
+                    if low > 0:
+                        rec["day_range_pct"] = round((high - low) / low * 100, 4)
+
+                    open_price = float(p.get("open") or 0)
+                    prev_close = float(p.get("prev_close") or (closes[i - 1] if i > 0 else 0))
+                    if prev_close > 0 and open_price > 0:
+                        rec["gap_percentage"] = round((open_price - prev_close) / prev_close * 100, 4)
+
+                    lookback_252 = max(0, i - 252)
+                    window_closes = closes[lookback_252 : i + 1]
+                    if window_closes:
+                        w52_high = max(window_closes)
+                        w52_low = min(window_closes)
+                        rec["week_52_high"] = round(w52_high, 2)
+                        rec["week_52_low"] = round(w52_low, 2)
+                        if w52_high > 0:
+                            rec["distance_from_52w_high"] = round((close - w52_high) / w52_high * 100, 4)
+
+                    if i >= 20:
+                        avg_vol = sum(volumes[i - 20 : i]) / 20
+                        rec["avg_volume_20d"] = int(avg_vol)
+                        if avg_vol > 0:
+                            rec["volume_ratio"] = round(volumes[i] / avg_vol, 4)
+
+                    derived_records.append(rec)
+
+                if derived_records:
+                    return await ts_store.upsert_derived_metrics(derived_records)
+                return 0
+            finally:
+                await conn.execute("SELECT pg_advisory_unlock($1)", lock_id)
+
     for symbol in all_symbols:
         try:
+            count = await _process_symbol(symbol)
+            total_upserted += count
             # Use a PostgreSQL advisory lock per symbol to prevent concurrent
             # derive_metrics runs from processing the same symbol at once.
             async with ts_store._pool.acquire() as conn:
