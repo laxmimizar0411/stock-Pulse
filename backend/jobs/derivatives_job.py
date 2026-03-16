@@ -30,6 +30,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+from jobs import with_retry
+
 logger = logging.getLogger(__name__)
 
 # NSE F&O bhavcopy: historical DERIVATIVES folder (example: fo28MAR2024bhav.csv.zip)
@@ -133,6 +135,7 @@ async def _fetch_nse_fo_bhavcopy(target_date: date) -> Optional[List[Dict[str, A
                     "iv_atm_pct": None,
                     "iv_percentile_1y": None,
                     "pcr_index_level": None,
+                    "is_placeholder": False,
                 }
             rec = by_symbol[sym]
             open_int = _safe_int(row.get("OPEN_INT") or row.get("Open_Interest") or row.get("OPEN_INTEGER"))
@@ -151,7 +154,8 @@ async def _fetch_nse_fo_bhavcopy(target_date: date) -> Optional[List[Dict[str, A
 
 
 async def _fallback_from_prices(ts_store, target_dates: List[date]) -> List[Dict[str, Any]]:
-    """Build minimal derivatives_daily rows (symbol, date, NULL F&O) from prices_daily."""
+    """Build minimal derivatives_daily rows (symbol, date, NULL F&O) from prices_daily.
+    Records are marked with is_placeholder=True to distinguish from real F&O data."""
     if not ts_store or not getattr(ts_store, "_is_initialized", False):
         return []
     records = []
@@ -180,6 +184,7 @@ async def _fallback_from_prices(ts_store, target_dates: List[date]) -> List[Dict
                     "iv_atm_pct": None,
                     "iv_percentile_1y": None,
                     "pcr_index_level": None,
+                    "is_placeholder": True,
                 })
     return records
 
@@ -206,6 +211,10 @@ async def run_derivatives_job(
     else:
         target_dates = [date.today()]
 
+    @with_retry(max_retries=3)
+    async def _upsert_with_retry(recs):
+        return await ts_store.upsert_derivatives(recs)
+
     total = 0
     for d in target_dates:
         records = await _fetch_nse_fo_bhavcopy(d)
@@ -214,8 +223,11 @@ async def run_derivatives_job(
             if records:
                 logger.info("Derivatives: using fallback from prices_daily for %s (%s symbols)", d, len(records))
         if records:
-            n = await ts_store.upsert_derivatives(records)
-            total += n
+            try:
+                n = await _upsert_with_retry(records)
+                total += n
+            except Exception as e:
+                logger.error("Failed to upsert derivatives for %s after retries: %s", d, e)
     return total
 
 

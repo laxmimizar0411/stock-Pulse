@@ -29,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+from jobs import with_retry
+
 logger = logging.getLogger(__name__)
 
 # EOD time for NSE (15:30 IST = UTC+5:30)
@@ -127,7 +129,12 @@ async def run_intraday_metrics_job(ts_store, days: int = 1) -> int:
     if not records:
         logger.info("No intraday_metrics records to upsert")
         return 0
-    count = await ts_store.upsert_intraday_metrics(records)
+
+    @with_retry(max_retries=3)
+    async def _upsert_with_retry():
+        return await ts_store.upsert_intraday_metrics(records)
+
+    count = await _upsert_with_retry()
     logger.info("Intraday metrics: upserted %s records", count)
     return count
 

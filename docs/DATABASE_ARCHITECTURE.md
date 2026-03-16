@@ -1,8 +1,24 @@
 # Stock-Pulse Database Architecture Documentation
 
 > **Project:** Stock-Pulse — AI/ML-powered Indian Stock Market Prediction & Analysis Platform
-> **Generated:** 2026-03-16
+> **Generated:** 2026-03-16 | **Last Updated:** 2026-03-16
 > **Codebase Size:** ~24,500 lines of Python (backend)
+
+### Recent Fixes Applied
+
+The following critical issues from the original audit have been resolved:
+
+| Issue | Status | Fix Applied |
+|-------|--------|-------------|
+| SQL injection via f-string queries | **Fixed** | All LIMIT values parameterized; table names use whitelists or `pg_class` |
+| Unsafe query playground | **Fixed** | Comment stripping, expanded keyword blocklist, `statement_timeout=10s`, wrapped subquery for LIMIT |
+| Silent `except: pass` handlers | **Fixed** | 15+ locations replaced with `logger.debug(..., exc_info=True)` |
+| N+1 query pattern in dashboard | **Fixed** | `asyncio.gather()` for parallel MongoDB collection counts/indexes |
+| No retry logic in background jobs | **Fixed** | `with_retry` decorator with exponential backoff in all 4 jobs |
+| No advisory locks (race conditions) | **Fixed** | `pg_advisory_lock` in derive_metrics to prevent concurrent symbol processing |
+| No PostgreSQL backup script | **Fixed** | `scripts/backup_postgresql.py` with pg_dump, rotation, metadata |
+| No derivatives placeholder indicator | **Fixed** | `is_placeholder` BOOLEAN column added to `derivatives_daily` |
+| Missing `asyncio` import in dashboard | **Fixed** | Added for `asyncio.gather()` usage |
 
 ---
 

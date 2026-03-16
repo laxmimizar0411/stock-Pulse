@@ -6,6 +6,7 @@ management for the Database Dashboard UI. All database access is via this
 service - the frontend never connects directly.
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -287,10 +288,14 @@ class DatabaseDashboardService:
         try:
             await self.db.command("ping")
             collections = await self.db.list_collection_names()
+            sorted_names = sorted(collections)
+            # Parallel collection counts to avoid N+1 sequential queries
+            counts = await asyncio.gather(
+                *[self.db[name].count_documents({}) for name in sorted_names]
+            )
             coll_stats = {}
             total_docs = 0
-            for name in sorted(collections):
-                count = await self.db[name].count_documents({})
+            for name, count in zip(sorted_names, counts):
                 coll_stats[name] = {
                     "documents": count,
                     "description": MONGO_COLLECTION_META.get(name, {}).get("description", ""),
@@ -310,7 +315,7 @@ class DatabaseDashboardService:
                     "storage_size_mb": round(stats.get("storageSize", 0) / (1024 * 1024), 2),
                 }
             except Exception:
-                pass
+                logger.debug("Failed to get MongoDB dbStats", exc_info=True)
 
             return {
                 "status": "connected",
@@ -368,11 +373,15 @@ class DatabaseDashboardService:
     async def get_mongo_collections(self) -> List[Dict[str, Any]]:
         """List all MongoDB collections with stats and metadata."""
         collections = await self.db.list_collection_names()
+        sorted_names = sorted(collections)
+        # Parallel counts and index info to avoid N+1
+        counts, indexes_list = await asyncio.gather(
+            asyncio.gather(*[self.db[name].count_documents({}) for name in sorted_names]),
+            asyncio.gather(*[self.db[name].index_information() for name in sorted_names]),
+        )
         result = []
-        for name in sorted(collections):
-            count = await self.db[name].count_documents({})
+        for name, count, indexes in zip(sorted_names, counts, indexes_list):
             meta = MONGO_COLLECTION_META.get(name, {})
-            indexes = await self.db[name].index_information()
             result.append({
                 "name": name,
                 "documents": count,
@@ -428,7 +437,7 @@ class DatabaseDashboardService:
                 if validator:
                     schema_info["validator"] = validator
         except Exception:
-            pass
+            logger.debug("Failed to get schema validator for %s", name, exc_info=True)
 
         # Infer from sample documents
         sample = await self.db[name].find({}, {"_id": 0}).limit(10).to_list(length=10)
@@ -857,7 +866,7 @@ class DatabaseDashboardService:
                 if day in buckets:
                     buckets[day] += 1
         except Exception:
-            pass
+            logger.debug("Failed to count failed pipeline jobs", exc_info=True)
 
         # Count failed extractions
         try:
@@ -871,7 +880,7 @@ class DatabaseDashboardService:
                 if day in buckets:
                     buckets[day] += 1
         except Exception:
-            pass
+            logger.debug("Failed to count failed extractions", exc_info=True)
 
         return [{"date": d, "errors": c} for d, c in sorted(buckets.items())]
 
@@ -1030,7 +1039,7 @@ class DatabaseDashboardService:
                     "threshold": warn_gb,
                 })
         except Exception:
-            pass
+            logger.debug("Failed MongoDB size check for alerts", exc_info=True)
 
         # Redis memory check
         if self.cache and self.cache.is_redis_available:
@@ -1049,7 +1058,7 @@ class DatabaseDashboardService:
                             "threshold": warn_mb,
                         })
             except Exception:
-                pass
+                logger.debug("Failed Redis memory check for alerts", exc_info=True)
 
         # PostgreSQL pool usage and storage size
         if self.ts_store and self.ts_store._is_initialized:
@@ -1070,7 +1079,7 @@ class DatabaseDashboardService:
                             "threshold": warn_pct,
                         })
             except Exception:
-                pass
+                logger.debug("Failed PostgreSQL pool usage check", exc_info=True)
 
             # PostgreSQL total storage size
             try:
@@ -1090,7 +1099,7 @@ class DatabaseDashboardService:
                             "threshold": warn_gb,
                         })
             except Exception:
-                pass
+                logger.debug("Failed PostgreSQL storage size check", exc_info=True)
 
         # Error rate check (errors in the last hour)
         try:
@@ -1114,7 +1123,7 @@ class DatabaseDashboardService:
                     "threshold": warn_rate,
                 })
         except Exception:
-            pass
+            logger.debug("Failed error rate check", exc_info=True)
 
         return alerts
 
@@ -1315,17 +1324,32 @@ class DatabaseDashboardService:
         if not sql_clean.startswith("SELECT"):
             raise ValueError("Only SELECT queries are allowed")
 
+        # Strip all SQL comments (-- line and /* block */) before keyword check
+        import re as _re
+        sql_no_comments = _re.sub(r'--[^\n]*', ' ', sql_clean)
+        sql_no_comments = _re.sub(r'/\*.*?\*/', ' ', sql_no_comments, flags=_re.DOTALL)
+
         # Block dangerous keywords
         for keyword in ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
-                        "CREATE", "TRUNCATE", "GRANT", "REVOKE", "EXEC"]:
-            if keyword in sql_clean.split("--")[0]:  # ignore comments
+                        "CREATE", "TRUNCATE", "GRANT", "REVOKE", "EXEC",
+                        "COPY", "SET", "LISTEN", "NOTIFY", "PREPARE",
+                        "EXECUTE", "DEALLOCATE", "VACUUM", "ANALYZE",
+                        "CLUSTER", "REINDEX", "LOCK", "DISCARD", "RESET"]:
+            if keyword in sql_no_comments.split():
                 raise ValueError(f"'{keyword}' not allowed in read-only mode")
+
+        # Block semicolons to prevent multi-statement attacks
+        if ";" in sql.strip().rstrip(";"):
+            raise ValueError("Multiple statements not allowed")
 
         try:
             async with self.ts_store._pool.acquire() as conn:
+                # Enforce a 10-second query timeout to prevent resource exhaustion
+                await conn.execute("SET LOCAL statement_timeout = '10s'")
                 # Use a read-only transaction
                 async with conn.transaction(readonly=True):
-                    rows = await conn.fetch(f"{sql} LIMIT {limit}")
+                    wrapped_sql = f"SELECT * FROM ({sql.rstrip(';')}) AS _q LIMIT $1"
+                    rows = await conn.fetch(wrapped_sql, limit)
                     if not rows:
                         return {"sql": sql, "columns": [], "rows": [], "returned": 0}
                     columns = list(rows[0].keys())
@@ -1365,17 +1389,18 @@ class DatabaseDashboardService:
         # MongoDB
         try:
             stats = await self.db.command("dbStats")
+            coll_names = await self.db.list_collection_names()
+            doc_counts = await asyncio.gather(
+                *[self.db[c].count_documents({}) for c in coll_names]
+            )
             snapshot["mongodb"] = {
                 "data_size_mb": round(stats.get("dataSize", 0) / (1024 * 1024), 2),
                 "storage_size_mb": round(stats.get("storageSize", 0) / (1024 * 1024), 2),
                 "index_size_mb": round(stats.get("indexSize", 0) / (1024 * 1024), 2),
-                "total_docs": sum(
-                    [await self.db[c].count_documents({})
-                     for c in await self.db.list_collection_names()]
-                ),
+                "total_docs": sum(doc_counts),
             }
         except Exception:
-            pass
+            logger.warning("Failed to collect MongoDB size snapshot", exc_info=True)
 
         # PostgreSQL
         if self.ts_store and self.ts_store._is_initialized:
@@ -1392,7 +1417,7 @@ class DatabaseDashboardService:
                     )
                     snapshot["postgresql"]["total_rows"] = total_rows or 0
             except Exception:
-                pass
+                logger.debug("Failed to collect PostgreSQL size snapshot", exc_info=True)
 
         # Redis
         if self.cache and self.cache.is_redis_available:
@@ -1404,7 +1429,7 @@ class DatabaseDashboardService:
                     )
                 snapshot["redis"]["key_count"] = self.cache.get_dbsize()
             except Exception:
-                pass
+                logger.debug("Failed to collect Redis size snapshot", exc_info=True)
 
         # Upsert (one snapshot per day)
         await self.db.size_snapshots.update_one(
