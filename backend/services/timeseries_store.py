@@ -14,17 +14,21 @@ Uses asyncpg for high-performance async PostgreSQL access.
 import asyncpg
 import json
 import logging
+import re
 from datetime import datetime, date, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Valid NSE/BSE symbol: 1-20 uppercase letters, digits, &, _, ., -
+_SYMBOL_RE = re.compile(r'^[A-Z0-9&_.\-]{1,20}$')
 
 
 def _parse_date(val) -> Optional[date]:
     """Safely parse a date value. Returns None for empty/invalid strings."""
     if val is None:
         return None
-    if isinstance(val, date):
+    if isinstance(val, date) and not isinstance(val, datetime):
         return val
     if isinstance(val, datetime):
         return val.date()
@@ -34,6 +38,16 @@ def _parse_date(val) -> Optional[date]:
             return None
         return datetime.strptime(val, "%Y-%m-%d").date()
     return None
+
+
+def _validate_symbol(symbol: str) -> str:
+    """Validate and normalize a stock symbol. Raises ValueError if invalid."""
+    if not symbol or not isinstance(symbol, str):
+        raise ValueError(f"Invalid symbol: {symbol!r}")
+    symbol = symbol.strip().upper()
+    if not _SYMBOL_RE.match(symbol):
+        raise ValueError(f"Invalid symbol format: {symbol!r}")
+    return symbol
 
 
 class TimeSeriesStore:
@@ -134,14 +148,18 @@ class TimeSeriesStore:
             async with conn.transaction():
                 for record in records:
                     try:
+                        symbol = _validate_symbol(record.get("symbol", ""))
                         date_val = _parse_date(record.get("date"))
+                        if date_val is None:
+                            logger.warning("Skipping price record with invalid date: %s", record.get("date"))
+                            continue
                         adj_close = record.get("adjusted_close")
                         if adj_close is not None:
                             adj_close = float(adj_close)
 
                         await conn.execute(
                             query,
-                            record.get("symbol", ""),
+                            symbol,
                             date_val,
                             float(record.get("open", 0) or 0),
                             float(record.get("high", 0) or 0),

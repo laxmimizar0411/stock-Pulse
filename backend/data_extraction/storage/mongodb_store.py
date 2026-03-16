@@ -165,10 +165,10 @@ class MongoDBStore:
                 "upsert": True,
             })
 
-        count = 0
-        # Batch in chunks of 500
         from pymongo import UpdateOne
 
+        count = 0
+        # Batch in chunks of 500 with idempotent retry
         for i in range(0, len(operations), 500):
             batch = operations[i : i + 500]
             bulk_ops = [
@@ -200,7 +200,6 @@ class MongoDBStore:
                         e,
                     )
             if last_error is not None:
-                # Surface the failure so the pipeline can decide whether to retry
                 logger.error(
                     "Failed to upsert price history batch %s-%s for %s after retries",
                     i,

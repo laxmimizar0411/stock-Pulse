@@ -373,19 +373,24 @@ class CacheService:
                 stats["redis_memory_used"] = info.get("used_memory_human", "N/A")
                 stats["redis_keys"] = self._redis.dbsize()
             except Exception:
-                logger.warning("Failed to collect Redis stats", exc_info=True)
+                logger.debug("Failed to get Redis stats", exc_info=True)
         else:
             stats["in_memory_keys"] = len(self._fallback_cache)
 
         return stats
 
     def close(self):
-        """Close Redis connection."""
+        """Close Redis connection and connection pool."""
         if self._redis:
             try:
                 self._redis.close()
             except Exception:
-                logger.warning("Error closing Redis connection", exc_info=True)
+                logger.debug("Error closing Redis client", exc_info=True)
+        if self._pool:
+            try:
+                self._pool.disconnect()
+            except Exception:
+                logger.debug("Error disconnecting Redis pool", exc_info=True)
 
     # ========================
     # HASH — per-field stock data
