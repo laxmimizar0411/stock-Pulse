@@ -138,6 +138,13 @@ class CacheService:
         self._socket_timeout = int(os.environ.get("REDIS_SOCKET_TIMEOUT", "5"))
         self._max_connections = int(os.environ.get("REDIS_MAX_CONNECTIONS", "10"))
 
+        # Optional TLS certificate paths for self-signed / mTLS connections
+        # When REDIS_URL uses "rediss://" scheme, TLS is auto-enabled.
+        # These env vars are only needed for custom CA or client certs.
+        self._ssl_ca_certs = os.environ.get("REDIS_SSL_CA_CERTS")       # CA bundle path
+        self._ssl_certfile = os.environ.get("REDIS_SSL_CERTFILE")       # Client cert path
+        self._ssl_keyfile = os.environ.get("REDIS_SSL_KEYFILE")         # Client key path
+
     def initialize(self):
         """Initialize Redis connection with retry and backoff. Safe to call multiple times."""
         max_retries = 3
@@ -146,6 +153,16 @@ class CacheService:
         for attempt in range(1, max_retries + 1):
             try:
                 import redis as redis_lib
+
+                # Build extra kwargs for TLS when custom certs are provided
+                ssl_kwargs = {}
+                if self._ssl_ca_certs:
+                    ssl_kwargs["ssl_ca_certs"] = self._ssl_ca_certs
+                if self._ssl_certfile:
+                    ssl_kwargs["ssl_certfile"] = self._ssl_certfile
+                if self._ssl_keyfile:
+                    ssl_kwargs["ssl_keyfile"] = self._ssl_keyfile
+
                 self._pool = redis_lib.ConnectionPool.from_url(
                     self._redis_url,
                     db=self._db,
@@ -154,6 +171,7 @@ class CacheService:
                     socket_timeout=self._socket_timeout,
                     retry_on_timeout=True,
                     max_connections=self._max_connections,
+                    **ssl_kwargs,
                 )
                 self._redis = redis_lib.Redis(connection_pool=self._pool)
                 # Test connection
@@ -630,9 +648,15 @@ def get_cache_service() -> Optional[CacheService]:
     return _cache_service
 
 
-async def start_health_check(interval: int = 60):
+async def start_health_check(interval: int = 60, on_reconnect=None):
     """Start a periodic Redis health check that pings every `interval` seconds
-    and attempts reconnection if Redis was lost."""
+    and attempts reconnection if Redis was lost.
+
+    Args:
+        interval: Seconds between health checks.
+        on_reconnect: Optional async callback invoked when Redis reconnects
+                      after being unavailable (e.g., to restart the alert consumer).
+    """
     import asyncio
 
     global _health_check_task
@@ -650,6 +674,12 @@ async def start_health_check(interval: int = 60):
                         if not svc._redis_available:
                             svc._redis_available = True
                             logger.info("Redis health check: reconnected")
+                            # Fire reconnect callback (e.g., restart alert consumer)
+                            if on_reconnect is not None:
+                                try:
+                                    await on_reconnect()
+                                except Exception as cb_err:
+                                    logger.warning(f"Redis on_reconnect callback error: {cb_err}")
                     except Exception:
                         if svc._redis_available:
                             svc._redis_available = False

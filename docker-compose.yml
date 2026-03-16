@@ -1,0 +1,144 @@
+version: "3.9"
+
+# =============================================================================
+# StockPulse Docker Compose — Development & Production
+# =============================================================================
+# Usage:
+#   docker compose up -d              # Start all services
+#   docker compose up -d redis mongo  # Start only databases
+#   docker compose logs -f backend    # Follow backend logs
+#   docker compose down               # Stop everything
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Redis — Hot cache, alert queue, WebSocket pub/sub
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: stockpulse-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - stockpulse
+
+  # ---------------------------------------------------------------------------
+  # MongoDB — Primary document store (users, alerts, watchlists, portfolio)
+  # ---------------------------------------------------------------------------
+  mongo:
+    image: mongo:7
+    container_name: stockpulse-mongo
+    restart: unless-stopped
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    environment:
+      MONGO_INITDB_DATABASE: stockpulse
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - stockpulse
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — Time-series & analytical layer (OHLCV, technicals, macro)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: stockpulse-postgres
+    restart: unless-stopped
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: stockpulse_ts
+      POSTGRES_USER: ${PG_USER:-stockpulse}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-stockpulse}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-stockpulse} -d stockpulse_ts"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - stockpulse
+
+  # ---------------------------------------------------------------------------
+  # Backend — FastAPI application
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: stockpulse-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override database URLs to use Docker service names
+      REDIS_URL: redis://redis:6379
+      MONGO_URL: mongodb://mongo:27017
+      TIMESERIES_DSN: postgresql://${PG_USER:-stockpulse}:${PG_PASSWORD:-stockpulse}@postgres:5432/stockpulse_ts
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - stockpulse
+
+  # ---------------------------------------------------------------------------
+  # Frontend — React app (dev server)
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: stockpulse-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      REACT_APP_BACKEND_URL: http://localhost:${BACKEND_PORT:-8000}
+    depends_on:
+      - backend
+    networks:
+      - stockpulse
+
+volumes:
+  redis-data:
+    driver: local
+  mongo-data:
+    driver: local
+  pg-data:
+    driver: local
+
+networks:
+  stockpulse:
+    driver: bridge

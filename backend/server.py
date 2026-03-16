@@ -38,6 +38,7 @@ from services.scoring_engine import generate_analysis, generate_ml_prediction
 from services.llm_service import generate_stock_insight, summarize_news
 from services.cache_service import init_cache_service, get_cache_service, CacheService, start_health_check, stop_health_check
 from services.alert_consumer import start_alert_consumer, stop_alert_consumer
+from services.rate_limiter import rate_limiter_middleware
 from services.timeseries_store import init_timeseries_store, get_timeseries_store, TimeSeriesStore
 
 # Import real market data service
@@ -347,10 +348,41 @@ async def database_health_check():
 
     # --- Redis ---
     if cache and cache.is_redis_available:
-        health["redis"] = {
+        redis_health = {
             "status": "connected",
             **cache.get_stats(),
         }
+        # Add detailed Redis server metrics
+        try:
+            server_info = cache.get_redis_info("server") or {}
+            memory_info = cache.get_redis_info("memory") or {}
+            clients_info = cache.get_redis_info("clients") or {}
+            stats_info = cache.get_redis_info("stats") or {}
+
+            # Ping latency
+            import time as _time
+            t0 = _time.perf_counter()
+            cache._redis.ping()
+            latency_ms = round((_time.perf_counter() - t0) * 1000, 2)
+
+            redis_health.update({
+                "latency_ms": latency_ms,
+                "redis_version": server_info.get("redis_version"),
+                "uptime_seconds": server_info.get("uptime_in_seconds"),
+                "connected_clients": clients_info.get("connected_clients"),
+                "used_memory_human": memory_info.get("used_memory_human"),
+                "used_memory_peak_human": memory_info.get("used_memory_peak_human"),
+                "mem_fragmentation_ratio": memory_info.get("mem_fragmentation_ratio"),
+                "maxmemory_human": memory_info.get("maxmemory_human"),
+                "maxmemory_policy": memory_info.get("maxmemory_policy"),
+                "evicted_keys": stats_info.get("evicted_keys", 0),
+                "keyspace_hits": stats_info.get("keyspace_hits", 0),
+                "keyspace_misses": stats_info.get("keyspace_misses", 0),
+                "total_commands_processed": stats_info.get("total_commands_processed", 0),
+            })
+        except Exception:
+            pass  # Keep basic stats even if enrichment fails
+        health["redis"] = redis_health
     else:
         health["redis"] = {
             "status": "fallback",
@@ -801,23 +833,36 @@ async def get_stock_analysis(symbol: str):
 
 @api_router.post("/stocks/{symbol}/llm-insight")
 async def get_llm_insight(symbol: str, request: LLMInsightRequest):
-    """Get AI-powered insight for a stock"""
+    """Get AI-powered insight for a stock (cached in Redis for 10 minutes)"""
     stocks = get_cached_stocks()
     symbol = symbol.upper()
-    
+
     if symbol not in stocks:
         raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
-    
+
+    # Check Redis cache first (LLM calls are expensive)
+    llm_cache_key = f"llm_insight:{symbol}:{request.analysis_type}"
+    if cache:
+        cached = cache.get(llm_cache_key)
+        if cached:
+            return cached
+
     stock_data = stocks[symbol].copy()
     stock_data["analysis"] = generate_analysis(stock_data)
-    
+
     insight = await generate_stock_insight(stock_data, request.analysis_type)
-    
-    return {
+
+    result = {
         "symbol": symbol,
         "analysis_type": request.analysis_type,
         "insight": insight
     }
+
+    # Cache for 10 minutes (LLM results don't change quickly)
+    if cache:
+        cache.set(llm_cache_key, result, ttl=600)
+
+    return result
 
 
 # ==================== SCREENER ====================
@@ -1658,6 +1703,21 @@ async def run_backtest_endpoint(config: BacktestConfig):
             from services.mock_data import generate_price_history
             price_history = generate_price_history(symbol, days=500)
         
+        # Check Redis cache for identical backtest config
+        import hashlib as _hashlib
+        import json as _bt_json
+        bt_config_str = _bt_json.dumps({
+            "symbol": symbol, "strategy": str(config.strategy),
+            "initial_capital": config.initial_capital,
+            "start_date": config.start_date, "end_date": config.end_date,
+        }, sort_keys=True, default=str)
+        bt_cache_key = f"backtest:{_hashlib.md5(bt_config_str.encode()).hexdigest()[:12]}"
+
+        if cache:
+            cached_bt = cache.get(bt_cache_key)
+            if cached_bt:
+                return cached_bt
+
         # Run the backtest
         result = await run_backtest(config, price_history)
 
@@ -1678,8 +1738,14 @@ async def run_backtest_endpoint(config: BacktestConfig):
             logger.info(f"Backtest result saved for {symbol}")
         except Exception as save_err:
             logger.warning(f"Failed to save backtest result: {save_err}")
-        
-        return result.model_dump()
+
+        result_data = result.model_dump()
+
+        # Cache backtest result in Redis for 5 minutes
+        if cache:
+            cache.set(bt_cache_key, result_data, ttl=300)
+
+        return result_data
 
     except Exception as e:
         logger.error(f"Backtest error: {e}")
@@ -2614,6 +2680,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Redis-backed rate limiting (per-IP, sliding window)
+app.middleware("http")(rate_limiter_middleware)
+
 
 # ==================== WEBSOCKET ====================
 @app.websocket("/ws/prices")
@@ -2909,9 +2978,18 @@ async def startup_event():
         except Exception as e:
             logger.warning(f"Alert consumer start warning: {e}")
 
+    # Callback invoked when Redis reconnects after being unavailable
+    async def _on_redis_reconnect():
+        """Start alert consumer if it wasn't running (Redis came up late)."""
+        try:
+            await start_alert_consumer()
+            logger.info("Alert consumer started after Redis reconnect")
+        except Exception as e:
+            logger.warning(f"Alert consumer restart on reconnect: {e}")
+
     # Start periodic Redis health check (ping every 60s, reconnect if lost)
     try:
-        await start_health_check(interval=60)
+        await start_health_check(interval=60, on_reconnect=_on_redis_reconnect)
     except Exception as e:
         logger.debug(f"Redis health check start: {e}")
 

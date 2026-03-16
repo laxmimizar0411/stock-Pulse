@@ -135,5 +135,7 @@ yarl==1.22.0
 zipp==3.23.0
 beautifulsoup4
 pyotp==2.9.0
-redis==7.2.0
+redis[hiredis]==7.2.0
+fakeredis==2.21.0
+slowapi==0.1.9
 asyncpg==0.31.0

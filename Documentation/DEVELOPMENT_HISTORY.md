@@ -1,5 +1,7 @@
 # StockPulse - Complete Development History
 
+> **Document Version**: 6.0
+> **Last Updated**: March 13, 2026
 > **Document Version**: 5.2
 > **Last Updated**: March 2026
 > **Platform**: Indian Stock Market Analysis Platform (NSE/BSE)
@@ -499,6 +501,112 @@ Database Setup Script (`backend/setup_databases.py`):
 - Updated `db_dashboard_service.py` metadata for all 14 tables
 - Updated `PROMPT_PostgreSQL_Complete_Local_Setup.md` to reflect full 14-table architecture
 
+### Session 10 — Redis Production Setup (v5.0)
+
+**Key commits:**
+- `fc7ab09` - "feat: Redis production setup — cache service, alert queue, pub/sub, health checks, tests"
+
+**What was built:**
+- **Redis Cache Service** (`cache_service.py`, expanded to 677 lines):
+  - Core `get/set/delete/delete_pattern` with namespace prefixing (`REDIS_KEY_PREFIX`)
+  - Bounded LRU in-memory fallback (10k keys max) when Redis unavailable
+  - Connection pool with configurable timeouts, retry-on-timeout, exponential backoff (3 retries)
+  - Domain helpers: `get_price`, `set_price`, `get_analysis`, `set_analysis`, `get_market_overview`, etc.
+  - HASH operations: `set_stock_hash`, `get_stock_field`, `get_stock_fields` for per-field stock data
+  - SORTED SET: `update_top_movers`, `get_top_gainers`, `get_top_losers` for real-time rankings
+  - PUB/SUB: `publish_price` for WebSocket price channel, `publish_alert` for alert queue (LIST with LTRIM cap at 1000)
+  - Dashboard introspection: `scan_keys`, `get_key_info`, `get_key_value_preview`, `get_redis_info`, `get_dbsize`
+  - Stats tracking: hits, misses, sets, errors, hit_rate_percent
+  - Periodic health check with auto-reconnect (`start_health_check` / `stop_health_check`)
+- **Alert Queue Consumer** (`alert_consumer.py`, 134 lines):
+  - Background task using BLPOP with 5s timeout on Redis LIST
+  - Processes alerts published by `AlertsService.trigger_alert()`
+  - Graceful startup/shutdown lifecycle
+- **WebSocket Manager Redis Integration** (`websocket_manager.py`):
+  - `PriceBroadcaster` publishes to Redis `channel:prices` pub/sub + per-symbol cache (`ws:price:{SYMBOL}`, 10s TTL)
+  - Lazy Redis init with pool reuse from CacheService
+  - Enables multi-instance price fan-out
+- **Server Integration** (`server.py`):
+  - Redis cache initialized at startup, closed at shutdown
+  - Alert consumer started conditionally when Redis is available
+  - `/api/cache/stats` and `/api/cache/flush` endpoints (flush guarded by `ALLOW_CACHE_FLUSH`)
+  - Caching wired into: stock list, market overview, stock analysis, screener results
+- **Environment Config** (`.env.example`):
+  - `REDIS_URL`, `REDIS_CONNECT_TIMEOUT`, `REDIS_SOCKET_TIMEOUT`, `REDIS_MAX_CONNECTIONS`, `REDIS_FALLBACK_MAX_KEYS`, `REDIS_KEY_PREFIX`
+- **Test Suite** (`test_redis_cache.py`, 28 tests):
+  - LRU fallback, TTL expiry, pattern deletion, HASH ops, SORTED SET ops, alert queue, dashboard helpers, connection retry
+
+### Session 11 — Alerts End-to-End + Dashboard Pages (v5.1)
+
+**Key commits:**
+- `5411c54` - "feat: wire alerts end-to-end and add macro/derivatives/intraday dashboard pages"
+
+**What was built:**
+- **Alerts End-to-End Pipeline (backend):**
+  - `AlertsService.trigger_alert()` now publishes to Redis alert queue via `cache_service.publish_alert()`
+  - Alert notifications persisted to MongoDB `alert_notifications` collection (survives restarts)
+  - `get_recent_notifications()` reads from MongoDB first, falls back to in-memory
+  - `clear_notifications()` converted to async, clears both in-memory and MongoDB
+  - Alert consumer (`alert_consumer.py`) rewritten to broadcast via WebSocket to all connected clients (not just logging)
+- **Alerts End-to-End Pipeline (frontend):**
+  - `useWebSocket` hook extended with `onAlertNotification` callback
+  - `WebSocketProvider` passes `onAlertNotification` prop
+  - `Alerts.jsx` receives real-time alert notifications via WebSocket, shows toast with `sonner`
+  - Live/Offline WebSocket connection indicator (Wifi/WifiOff icons)
+- **New Frontend Pages:**
+  - `/macro` — **Macro Indicators** (`MacroIndicators.jsx`): USD/INR exchange rate area chart, commodity prices multi-line chart (Brent Crude, Gold, Copper, Steel), RBI Repo Rate / CPI Inflation / IIP Growth cards, historical data table
+  - `/derivatives` — **Derivatives Analytics** (`Derivatives.jsx`): Symbol selector with popular picks (NIFTY, BANKNIFTY, etc.), Futures OI trend (composed bar + line), Put-Call Ratio dual-line chart, Implied Volatility area chart, summary cards with bullish/bearish badges
+  - `/intraday` — **Intraday Metrics** (`IntradayMetrics.jsx`): RSI (14) area chart with overbought/oversold zones, MACD bar chart, VWAP trend + A/D ratio side-by-side, India VIX fear index card, color-coded signals
+- **Navigation Updated:**
+  - Three new sidebar items: Macro (Globe icon), Derivatives (CandlestickChart icon), Intraday (Activity icon)
+  - Routes added in `App.js`
+
+### Session 12 — Redis Production Hardening (v5.2)
+
+**Key commits:**
+- `0e397a9` - "feat: complete Redis production setup — Docker, auth, rate limiting, multi-instance"
+
+**What was built:**
+- **Docker Infrastructure (new):**
+  - `docker-compose.yml`: Redis 7-alpine, MongoDB 7, PostgreSQL 16-alpine, backend, frontend — all with healthchecks, named volumes, and a `stockpulse` bridge network
+  - `backend/Dockerfile`: Python 3.11-slim with gcc, libpq-dev, curl; installs requirements, exposes port 8000
+  - `redis/redis.conf`: Production config with `maxmemory 256mb`, `allkeys-lru` eviction, RDB snapshots (save 900/300/60), slow-log (10ms), dangerous command renaming (`FLUSHALL`, `FLUSHDB`, `CONFIG`, `DEBUG` → ""), lazy freeing enabled, 100 max clients
+- **Security & TLS:**
+  - TLS/SSL certificate support: `REDIS_SSL_CA_CERTS`, `REDIS_SSL_CERTFILE`, `REDIS_SSL_KEYFILE` environment variables wired into `ConnectionPool.from_url()`
+  - `redis.conf` includes `requirepass` placeholder for password authentication
+  - `.env.example` updated with TLS cert path documentation
+- **Dependencies:**
+  - `redis[hiredis]==7.2.0` (C-accelerated parser, ~10x faster)
+  - `fakeredis==2.21.0` (mock Redis for unit tests)
+  - `slowapi==0.1.9` (rate limiting library)
+- **Redis-Backed Rate Limiting** (`services/rate_limiter.py`, new):
+  - Per-IP sliding window using Redis `INCR` + `EXPIRE`
+  - Default: 120 requests/minute; tighter limits for expensive endpoints (LLM insight: 10/min, backtest: 20/min, screener: 30/min, reports: 10/min)
+  - In-memory fallback when Redis unavailable
+  - `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers on every response
+  - 429 Too Many Requests with `Retry-After` header when exceeded
+  - Exempt: `/api/health`, `/docs`, `/openapi.json`, `/ws/`
+- **Alert Consumer Late-Start Fix:**
+  - `start_health_check()` now accepts `on_reconnect` async callback
+  - When Redis reconnects after being unavailable at boot, callback fires `start_alert_consumer()`
+  - Eliminates the bug where alert consumer never started if Redis was down at startup
+- **Multi-Instance Pub/Sub Subscriber:**
+  - `PriceBroadcaster._subscribe_loop()`: Subscribes to Redis `channel:prices` on a dedicated connection
+  - Receives prices published by other workers and broadcasts to local WebSocket clients
+  - Enables horizontal scaling: Worker A fetches prices → publishes to Redis → Workers B/C/D receive and push to their local clients
+- **Enriched Health Endpoint:**
+  - `/api/database/health` Redis section now includes: `latency_ms` (ping RTT), `redis_version`, `uptime_seconds`, `connected_clients`, `used_memory_human`, `used_memory_peak_human`, `mem_fragmentation_ratio`, `maxmemory_human`, `maxmemory_policy`, `evicted_keys`, `keyspace_hits`, `keyspace_misses`, `total_commands_processed`
+- **Performance Caching:**
+  - LLM insight responses cached 10 minutes in Redis (key: `llm_insight:{symbol}:{type}`)
+  - Backtest results cached 5 minutes (key: `backtest:{md5(config)[:12]}`)
+- **Integration Tests** (`test_redis_integration.py`, new):
+  - Rate limiter memory window test
+  - Rate limiter Redis window test (skips if Redis unavailable)
+  - Alert queue round-trip (publish → BLPOP)
+  - Pub/Sub price round-trip (publish → subscribe)
+  - Health check `on_reconnect` callback parameter verification
+  - TLS config environment variable read test
+  - Total: 31 tests passing (28 cache + 3 integration)
 ### Phase 10: PostgreSQL Data Jobs — Macro, Derivatives, Intraday (v4.1)
 - **Macro indicators job** (`jobs/macro_indicators_job.py`): Fetches USD/INR, Brent, gold, copper via yfinance; optional RBI repo/CPI/IIP via env (`MACRO_RBI_REPO_RATE`, `MACRO_CPI_INFLATION`, `MACRO_IIP_GROWTH`). Upserts into `macro_indicators`. CLI: `python -m jobs.macro_indicators_job [--days 90]`.
 - **Derivatives job** (`jobs/derivatives_job.py`): Tries NSE F&O bhavcopy download from archives; on failure, fallback: one row per (symbol, date) from `prices_daily` (NULL F&O fields). Upserts into `derivatives_daily`. CLI: `python -m jobs.derivatives_job [--date YYYY-MM-DD] [--days N]`.

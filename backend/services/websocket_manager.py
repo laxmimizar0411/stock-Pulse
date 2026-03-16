@@ -6,6 +6,7 @@ Handles WebSocket connections and broadcasts price updates to clients
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Dict, Set, List, Optional, Any
 from fastapi import WebSocket, WebSocketDisconnect
@@ -195,6 +196,7 @@ class PriceBroadcaster:
         self.fetch_interval = fetch_interval
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._sub_task: Optional[asyncio.Task] = None
         self._redis = None
         self._redis_available = False
 
@@ -238,22 +240,34 @@ class PriceBroadcaster:
             self._redis_available = False
 
     async def start(self):
-        """Start the price broadcast service"""
+        """Start the price broadcast service and Redis subscriber"""
         if self._running:
             return
 
         self._init_redis()
         self._running = True
         self._task = asyncio.create_task(self._broadcast_loop())
+
+        # Start Redis Pub/Sub subscriber for multi-instance fan-out
+        if self._redis_available:
+            self._sub_task = asyncio.create_task(self._subscribe_loop())
+            logger.info("Price subscriber started (multi-instance fan-out via Redis Pub/Sub)")
+
         logger.info(f"Price broadcaster started with {self.fetch_interval}s interval")
 
     async def stop(self):
-        """Stop the price broadcast service"""
+        """Stop the price broadcast service and subscriber"""
         self._running = False
         if self._task:
             self._task.cancel()
             try:
                 await self._task
+            except asyncio.CancelledError:
+                pass
+        if self._sub_task:
+            self._sub_task.cancel()
+            try:
+                await self._sub_task
             except asyncio.CancelledError:
                 pass
         if self._redis:
@@ -304,6 +318,60 @@ class PriceBroadcaster:
             pipe.execute()
         except Exception as e:
             logger.debug(f"Redis publish error: {e}")
+
+    async def _subscribe_loop(self):
+        """Subscribe to Redis Pub/Sub channel and broadcast received prices locally.
+
+        This enables multi-instance deployments: Worker A publishes prices,
+        Workers B/C/... receive them here and push to their local WebSocket clients.
+        Uses a dedicated Redis connection to avoid blocking the main client.
+        """
+        try:
+            import redis as _redis_lib
+        except ImportError:
+            return
+
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+        try:
+            sub_redis = _redis_lib.Redis.from_url(
+                redis_url,
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=0,  # blocking subscribe
+            )
+            pubsub = sub_redis.pubsub()
+            pubsub.subscribe(self._channel_key())
+            logger.info(f"Subscribed to Redis channel: {self._channel_key()}")
+        except Exception as e:
+            logger.debug(f"Redis Pub/Sub subscribe failed: {e}")
+            return
+
+        while self._running:
+            try:
+                msg = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: pubsub.get_message(ignore_subscribe_messages=True, timeout=2.0)
+                )
+                if msg is None:
+                    continue
+                if msg["type"] == "message":
+                    try:
+                        prices = json.loads(msg["data"])
+                        # Broadcast to local WebSocket clients
+                        await self.manager.broadcast_prices(prices)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"Pub/Sub subscriber error: {e}")
+                await asyncio.sleep(2)
+
+        try:
+            pubsub.unsubscribe()
+            pubsub.close()
+            sub_redis.close()
+        except Exception:
+            pass
 
     async def _fetch_prices(self, symbols: List[str]) -> Dict[str, Dict]:
         """Fetch current prices for symbols"""
