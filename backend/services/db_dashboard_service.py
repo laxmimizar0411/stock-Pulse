@@ -174,7 +174,7 @@ PG_TABLE_META = {
 REDIS_SAFE_PREFIXES = [
     "price:", "analysis:", "stock_list", "market:overview",
     "pipeline:", "news:", "ws:price:", "top_gainers", "top_losers",
-    "alert_queue", "stock:",
+    "alert_queue", "stock:", "database:overview",
 ]
 
 # Collections that allow single-document delete from dashboard
@@ -251,13 +251,36 @@ class DatabaseDashboardService:
     # ===============================================================
 
     async def get_overview(self) -> Dict[str, Any]:
-        """Get aggregated overview of all databases."""
+        """Get aggregated overview of all databases.
+
+        Cached in Redis for a short TTL to avoid repeated heavy introspection.
+        """
+        cache_key = "database:overview"
+
+        # Try cache first
+        if self.cache:
+            try:
+                cached = self.cache.get(cache_key)
+                if cached:
+                    return cached
+            except Exception:
+                # Fall back to live computation on any cache error
+                logger.debug("Database overview cache read failed; computing live.", exc_info=True)
+
         overview = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "mongodb": await self._get_mongo_overview(),
             "postgresql": await self._get_pg_overview(),
             "redis": self._get_redis_overview(),
         }
+
+        # Store in cache with short TTL (30s) for dashboard responsiveness
+        if self.cache:
+            try:
+                self.cache.set(cache_key, overview, ttl_seconds=30)
+            except Exception:
+                logger.debug("Database overview cache write failed; ignoring.", exc_info=True)
+
         return overview
 
     async def _get_mongo_overview(self) -> Dict[str, Any]:

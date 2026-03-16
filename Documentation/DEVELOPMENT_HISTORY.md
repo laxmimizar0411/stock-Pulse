@@ -2,6 +2,8 @@
 
 > **Document Version**: 6.0
 > **Last Updated**: March 13, 2026
+> **Document Version**: 5.2
+> **Last Updated**: March 2026
 > **Platform**: Indian Stock Market Analysis Platform (NSE/BSE)
 > **Repository**: [github.com/ShraddheyWamanSatpute/Stock-Pulse](https://github.com/ShraddheyWamanSatpute/Stock-Pulse)
 > **Active PR**: [#1 - Hybrid Database Architecture + Pipeline Fixes](https://github.com/ShraddheyWamanSatpute/Stock-Pulse/pull/1)
@@ -605,6 +607,26 @@ Database Setup Script (`backend/setup_databases.py`):
   - Health check `on_reconnect` callback parameter verification
   - TLS config environment variable read test
   - Total: 31 tests passing (28 cache + 3 integration)
+### Phase 10: PostgreSQL Data Jobs — Macro, Derivatives, Intraday (v4.1)
+- **Macro indicators job** (`jobs/macro_indicators_job.py`): Fetches USD/INR, Brent, gold, copper via yfinance; optional RBI repo/CPI/IIP via env (`MACRO_RBI_REPO_RATE`, `MACRO_CPI_INFLATION`, `MACRO_IIP_GROWTH`). Upserts into `macro_indicators`. CLI: `python -m jobs.macro_indicators_job [--days 90]`.
+- **Derivatives job** (`jobs/derivatives_job.py`): Tries NSE F&O bhavcopy download from archives; on failure, fallback: one row per (symbol, date) from `prices_daily` (NULL F&O fields). Upserts into `derivatives_daily`. CLI: `python -m jobs.derivatives_job [--date YYYY-MM-DD] [--days N]`.
+- **Intraday metrics job** (`jobs/intraday_metrics_job.py`): Builds EOD snapshots from `technical_indicators` + `prices_daily` (one row per symbol per day, timestamp 15:30 IST). Fills `rsi_hourly`, `macd_crossover_hourly`, `vwap_intraday`, `advance_decline_ratio`. Upserts into `intraday_metrics`. CLI: `python -m jobs.intraday_metrics_job [--days N]`.
+- **Job API endpoints**: `POST /api/jobs/run/macro-indicators`, `POST /api/jobs/run/derivatives`, `POST /api/jobs/run/intraday-metrics` (trigger jobs via API).
+- **Documentation**: `POSTGRES_DB_WORK_STATUS.md` updated — §4 "Macro, derivatives, intraday — implemented"; optional macro env vars in `.env.example`.
+
+### Phase 11: Redis Phase 1 + Partial Phase 2 (v4.2)
+
+- **cache_service.py (major overhaul):** SCAN instead of KEYS in delete_pattern and key listing; connection retry on init (3 retries, exponential backoff) and auto-reconnect on get/set failure; ConnectionPool with configurable REDIS_MAX_CONNECTIONS (default 10); _LRUFallbackCache (10k max keys, LRU eviction); alert_queue cap via LTRIM (1000) in publish_alert; configurable REDIS_CONNECT_TIMEOUT, REDIS_SOCKET_TIMEOUT (default 5s); dashboard helpers: get_redis_info(), get_dbsize(), scan_keys(), get_key_info(), get_key_value_preview(), get_stock_hash().
+- **db_dashboard_service.py:** All cache._redis usages replaced with CacheService method calls.
+- **server.py:** /cache/flush blocked in production unless ALLOW_CACHE_FLUSH=true; API response caching for /timeseries/stats, /database/health, /pipeline/status (30s TTL); alert consumer lifecycle (start/stop with server).
+- **alert_consumer.py (new):** BLPOP background consumer for alert_queue; processes alerts and runs with server lifecycle.
+- **market_data_service.py:** Redis integration for quotes, history, indices, fundamentals via CacheService (mkt:* keys with TTL).
+- **.env.example:** Redis tuning options (REDIS_URL, REDIS_SSL, REDIS_MAX_CONNECTIONS, REDIS_CONNECT_TIMEOUT, REDIS_SOCKET_TIMEOUT, ALLOW_CACHE_FLUSH) with comments.
+- **REDIS_SETUP.md (new):** Complete guide — install, config, verification, key naming, eviction, runbook, production checklist.
+- **Data_Storage_and_Growth_Guide.md:** Concrete maxmemory instructions for Redis.
+- **test_redis_cache.py (new):** 28 tests covering LRU fallback, CacheService fallback mode, Redis integration, connection retry.
+
+Phase 1 completion criteria (§8.3 in REDIS_SYSTEM_AUDIT_AND_ROADMAP.md) all satisfied. Phase 2 partial: connection pool, dashboard helpers, market_data Redis, API caching for dashboard endpoints done; namespace prefix optional.
 
 ---
 
@@ -624,6 +646,7 @@ Stock-Pulse/
 │   │
 │   ├── test_pipeline.py             # Integration test suite
 │   │                                #   --db-only, --api-only, --all
+│   ├── test_redis_cache.py          # Redis cache tests (28 tests: LRU fallback, integration, retry)
 │   │
 │   ├── models/
 │   │   ├── stock_models.py          # Stock, Portfolio, Alert, ScreenerFilter models
@@ -631,7 +654,10 @@ Stock-Pulse/
 │   │
 │   ├── jobs/
 │   │   ├── __init__.py              # Jobs package init
-│   │   └── derive_metrics.py        # Derived metrics computation job
+│   │   ├── derive_metrics.py        # Derived metrics computation job
+│   │   ├── macro_indicators_job.py  # Macro data (yfinance + optional RBI) → macro_indicators
+│   │   ├── derivatives_job.py      # NSE F&O or prices fallback → derivatives_daily
+│   │   └── intraday_metrics_job.py # EOD snapshots from daily data → intraday_metrics
 │   │
 │   ├── routes/
 │   │   └── pg_control.py            # PostgreSQL control REST routes
@@ -642,7 +668,8 @@ Stock-Pulse/
 │   │   ├── llm_service.py           # GPT-4o integration
 │   │   ├── alerts_service.py        # Price alert service (379 lines)
 │   │   ├── pipeline_service.py      # Groww pipeline orchestration (9-table persistence)
-│   │   ├── cache_service.py         # Redis cache with pub/sub (396 lines)
+│   │   ├── cache_service.py         # Redis cache: SCAN, pool, retry, LRU fallback, dashboard helpers (~608 lines)
+│   │   ├── alert_consumer.py        # BLPOP consumer for alert_queue (server lifecycle)
 │   │   ├── timeseries_store.py      # PostgreSQL time-series bridge (14 tables, 12 upsert + 17 query methods)
 │   │   ├── pg_control_service.py    # PostgreSQL start/stop/resource monitoring
 │   │   └── db_dashboard_service.py  # Database dashboard metadata (14 tables)
@@ -686,7 +713,10 @@ Stock-Pulse/
 │
 ├── Documentation/
 │   ├── DEVELOPMENT_HISTORY.md                    # This document
-│   ├── Database_Architecture_Plan.md             # 4-layer DB design
+│   ├── REDIS_SYSTEM_AUDIT_AND_ROADMAP.md         # Redis audit, roadmap, Phase 1/2/3 status
+│   ├── REDIS_SETUP.md                            # Redis install, config, runbook, production checklist
+│   ├── POSTGRES_DB_WORK_STATUS.md                # PostgreSQL status, jobs, test results
+│   ├── Database_Architecture_Plan.md            # 4-layer DB design
 │   ├── Data_Sources_and_Extraction_Guide.md      # 160-field source mapping
 │   ├── Technical-architecture-LLD-HLD.md         # System architecture
 │   ├── StockPulse_Data_Extraction_System_Blueprint.md  # Extraction blueprint
@@ -989,6 +1019,9 @@ Groww API -> GrowwAPIExtractor -> _transform_quote_data()
 
 | Document | Location | Description |
 |----------|----------|-------------|
+| PostgreSQL DB Work Status | `Documentation/POSTGRES_DB_WORK_STATUS.md` | Current PG status, bugs fixed, jobs (macro/derivatives/intraday), test results |
+| Redis System Audit & Roadmap | `Documentation/REDIS_SYSTEM_AUDIT_AND_ROADMAP.md` | Redis audit, task list, Phase 1/2/3 roadmap, completion status |
+| Redis Setup | `Documentation/REDIS_SETUP.md` | Install, config, verification, runbook, production checklist |
 | Database Architecture Plan | `Documentation/Database_Architecture_Plan.md` | 4-layer DB design details |
 | Data Sources & Extraction Guide | `Documentation/Data_Sources_and_Extraction_Guide.md` | 160-field source mapping with code |
 | V2 Data Requirements | `Documentation/V2-Complete-Data-requirement-Claude-Offline_Loader.md` | Complete 160-field specification |
@@ -1018,10 +1051,12 @@ Groww API -> GrowwAPIExtractor -> _transform_quote_data()
 | `82867c9` | feat: add Query Playground, Tools, Help Panel, Export, WebSocket, and theme toggle | Session 8 |
 | `342aa25` | Merge pull request #9 from ShraddheyWamanSatpute/claude/mongodb-production-ready-0AkeH | Merge |
 | (Session 9) | PostgreSQL 14-table schema, PgControlService, PostgresControl page, derivation job, 14 REST endpoints | Session 9 |
+| `3ddac23` | Add macro, derivatives, intraday jobs; POST /api/jobs/run/*; POSTGRES_DB_WORK_STATUS, .env.example | Phase 10 |
+| (Phase 11) | Redis Phase 1 + partial Phase 2: cache_service (SCAN, pool, retry, LRU, LTRIM, helpers), alert_consumer, db_dashboard refactor, market_data Redis, server flush guard + API caching, REDIS_SETUP.md, test_redis_cache.py (28 tests) | Phase 11 |
 
 ---
 
-*Document maintained as part of StockPulse development history. Last updated: March 7, 2026.*
+*Document maintained as part of StockPulse development history. Last updated: March 2026.*
 
 ---
 
@@ -1046,8 +1081,8 @@ As of **March 2026**, the StockPulse system is in a strong **advanced-prototype*
 
 - **Databases**
   - **MongoDB**: Primary store for user data (watchlist, portfolio, alerts), pipeline jobs, extraction logs, quality reports, news, and backtest results. Indexes, backup script, and safety utilities are implemented and used.
-  - **Redis**: Integrated cache layer for prices, analysis, pipeline status, and screener results; falls back to in-memory cache if Redis is not available.
-  - **PostgreSQL**: Time-series + analytics layer fully expanded to 14 tables with 40+ indexes covering 270+ fields. 12 upsert methods, 17+ query methods, 7-table JOIN screener with ~50 filter/sort keys. Pipeline persists to 9 table categories. Derived metrics job computes daily returns, 52-week metrics, and weekly crossovers. PG Control UI provides start/stop toggle and resource monitoring. Fully operational when Postgres runs locally.
+  - **Redis**: Production-ready cache layer (Phase 1 complete): SCAN (no KEYS), connection pool and retry, bounded LRU fallback (10k keys), alert_queue cap + BLPOP consumer (alert_consumer.py), /cache/flush guarded in production (ALLOW_CACHE_FLUSH). Market data service uses Redis for quotes, history, indices, fundamentals (mkt:*). Dashboard uses CacheService methods only. REDIS_SETUP.md and runbook documented; 28 tests in test_redis_cache.py. Falls back to in-memory LRU cache if Redis is unavailable.
+  - **PostgreSQL**: Time-series + analytics layer fully expanded to 14 tables with 43+ indexes covering 270+ fields. 12 upsert methods, 17+ query methods, 7-table JOIN screener with ~50 filter/sort keys. Pipeline persists to 9 table categories. Derived metrics job computes daily returns, 52-week metrics, and weekly crossovers. **Macro, derivatives, and intraday** tables are populated by dedicated jobs: `macro_indicators_job` (yfinance + optional RBI env), `derivatives_job` (NSE F&O bhavcopy or prices fallback), `intraday_metrics_job` (EOD snapshots from daily data). Job triggers: `POST /api/jobs/run/macro-indicators`, `POST /api/jobs/run/derivatives`, `POST /api/jobs/run/intraday-metrics`. PG Control UI provides start/stop toggle and resource monitoring. Fully operational when Postgres runs locally.
   - MongoDB configuration is **environment-aware**:
     - In your current **development/local** setup, `ENVIRONMENT` defaults to `development` and `MONGO_URL` safely defaults to `mongodb://localhost:27017`
     - In a future **production** setup, `MONGO_URL` will be required, must not use localhost, and the app will fail fast if Mongo is unreachable
@@ -1057,3 +1092,4 @@ As of **March 2026**, the StockPulse system is in a strong **advanced-prototype*
 - **Operations & Docs**
   - Detailed technical/functional documentation exists for architecture, databases, scoring, extraction, and data sources.
   - MongoDB production checklist and runbooks are ready for a future phase when you decide to host the system for other users or on cloud, without impacting the current local workflow.
+  - **Redis**: REDIS_SETUP.md provides install, config, verification, key naming, eviction, runbook, and production checklist. Phase 1 completion criteria are met; Phase 2 partially done (pool, dashboard helpers, market_data Redis, API caching).

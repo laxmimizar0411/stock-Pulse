@@ -338,6 +338,12 @@ class DataPipelineService:
                     
                     # Store live data in Redis!
                     if cache:
+                        # Invalidate any stale caches for this symbol first
+                        try:
+                            cache.invalidate_stock(symbol)
+                        except Exception:
+                            logger.debug(f"Cache invalidation failed for {symbol}; continuing with fresh writes.", exc_info=True)
+
                         # Store as full JSON document
                         cache.set_price(symbol, result.data)
                         # Store as HASH for partial field reads
