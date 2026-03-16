@@ -181,88 +181,6 @@ async def compute_derived_metrics(
         try:
             count = await _process_symbol(symbol)
             total_upserted += count
-            # Use a PostgreSQL advisory lock per symbol to prevent concurrent
-            # derive_metrics runs from processing the same symbol at once.
-            async with ts_store._pool.acquire() as conn:
-                lock_key = hash(symbol) & 0x7FFFFFFF  # 31-bit positive key
-                await conn.execute("SELECT pg_advisory_lock($1)", lock_key)
-                try:
-                    # Fetch price history with retry
-                    prices = await _retry_async(
-                        f"get_prices({symbol})",
-                        lambda: ts_store.get_prices(symbol, limit=lookback_days),
-                    )
-                finally:
-                    await conn.execute("SELECT pg_advisory_unlock($1)", lock_key)
-
-            if len(prices) < 2:
-                continue
-
-            # Sort oldest-first for easier computation
-            prices.sort(key=lambda p: p["date"])
-
-            derived_records = []
-            closes = [float(p.get("close") or 0) for p in prices]
-            volumes = [int(p.get("volume") or 0) for p in prices]
-
-            for i, p in enumerate(prices):
-                close = closes[i]
-                if close <= 0:
-                    continue
-
-                rec = {
-                    "symbol": symbol,
-                    "date": p["date"].isoformat() if hasattr(p["date"], "isoformat") else str(p["date"]),
-                }
-
-                # Daily return
-                if i > 0 and closes[i - 1] > 0:
-                    rec["daily_return_pct"] = round((close - closes[i - 1]) / closes[i - 1] * 100, 4)
-
-                # N-day returns
-                for n, key in [(5, "return_5d_pct"), (20, "return_20d_pct"), (60, "return_60d_pct")]:
-                    if i >= n and closes[i - n] > 0:
-                        rec[key] = round((close - closes[i - n]) / closes[i - n] * 100, 4)
-
-                # Day range
-                high = float(p.get("high") or 0)
-                low = float(p.get("low") or 0)
-                if low > 0:
-                    rec["day_range_pct"] = round((high - low) / low * 100, 4)
-
-                # Gap percentage
-                open_price = float(p.get("open") or 0)
-                prev_close = float(p.get("prev_close") or (closes[i - 1] if i > 0 else 0))
-                if prev_close > 0 and open_price > 0:
-                    rec["gap_percentage"] = round((open_price - prev_close) / prev_close * 100, 4)
-
-                # 52-week (252 trading days) high/low
-                lookback_252 = max(0, i - 252)
-                window_closes = closes[lookback_252 : i + 1]
-                if window_closes:
-                    w52_high = max(window_closes)
-                    w52_low = min(window_closes)
-                    rec["week_52_high"] = round(w52_high, 2)
-                    rec["week_52_low"] = round(w52_low, 2)
-                    if w52_high > 0:
-                        rec["distance_from_52w_high"] = round((close - w52_high) / w52_high * 100, 4)
-
-                # Volume ratio and avg volume 20d
-                if i >= 20:
-                    avg_vol = sum(volumes[i - 20 : i]) / 20
-                    rec["avg_volume_20d"] = int(avg_vol)
-                    if avg_vol > 0:
-                        rec["volume_ratio"] = round(volumes[i] / avg_vol, 4)
-
-                derived_records.append(rec)
-
-            if derived_records:
-                count = await _retry_async(
-                    f"upsert_derived_metrics({symbol})",
-                    lambda: ts_store.upsert_derived_metrics(derived_records),
-                )
-                total_upserted += count
-
         except Exception as e:
             logger.warning(f"Error computing derived metrics for {symbol}: {e}")
 
@@ -297,65 +215,67 @@ async def compute_weekly_metrics(
     all_symbols = [r["symbol"] for r in sym_rows]
     total = 0
 
+    @with_retry(max_retries=3)
+    async def _process_weekly_symbol(sym: str) -> int:
+        """Compute and upsert weekly metrics for a single symbol with advisory lock."""
+        lock_id = _symbol_lock_id(f"weekly:{sym}")
+        async with ts_store._pool.acquire() as conn:
+            acquired = await conn.fetchval("SELECT pg_try_advisory_lock($1)", lock_id)
+            if not acquired:
+                logger.debug("Skipping weekly %s — advisory lock held", sym)
+                return 0
+            try:
+                prices = await ts_store.get_prices(sym, limit=weeks * 7)
+                if len(prices) < 50:
+                    return 0
+
+                prices.sort(key=lambda p: p["date"])
+
+                week_buckets: Dict[str, List] = {}
+                for p in prices:
+                    d = p["date"]
+                    if hasattr(d, "isocalendar"):
+                        monday = d - timedelta(days=d.weekday())
+                        key = monday.isoformat()
+                    else:
+                        continue
+                    week_buckets.setdefault(key, []).append(p)
+
+                records = []
+                closes_all = [float(p.get("close") or 0) for p in prices]
+
+                for week_start_str, week_prices in sorted(week_buckets.items()):
+                    if not week_prices:
+                        continue
+
+                    last_day = week_prices[-1]
+                    last_idx = None
+                    for idx_w, p in enumerate(prices):
+                        if p["date"] == last_day["date"] and p.get("symbol") == sym:
+                            last_idx = idx_w
+                            break
+                    if last_idx is None or last_idx < 200:
+                        continue
+
+                    sma50 = sum(closes_all[last_idx - 49 : last_idx + 1]) / 50
+                    sma200 = sum(closes_all[last_idx - 199 : last_idx + 1]) / 200
+
+                    records.append({
+                        "symbol": sym,
+                        "week_start": week_start_str,
+                        "sma_weekly_crossover": sma50 > sma200,
+                    })
+
+                if records:
+                    return await ts_store.upsert_weekly_metrics(records)
+                return 0
+            finally:
+                await conn.execute("SELECT pg_advisory_unlock($1)", lock_id)
+
     for symbol in all_symbols:
         try:
-            # Fetch enough daily data to compute weekly aggregates (with retry)
-            prices = await _retry_async(
-                f"get_prices_weekly({symbol})",
-                lambda: ts_store.get_prices(symbol, limit=weeks * 7),
-            )
-            if len(prices) < 50:
-                continue
-
-            prices.sort(key=lambda p: p["date"])
-
-            # Group by ISO week
-            week_buckets: Dict[str, List] = {}
-            for p in prices:
-                d = p["date"]
-                if hasattr(d, "isocalendar"):
-                    iso = d.isocalendar()
-                    # Monday of that week
-                    monday = d - timedelta(days=d.weekday())
-                    key = monday.isoformat()
-                else:
-                    continue
-                week_buckets.setdefault(key, []).append(p)
-
-            records = []
-            closes_all = [float(p.get("close") or 0) for p in prices]
-
-            for week_start_str, week_prices in sorted(week_buckets.items()):
-                if not week_prices:
-                    continue
-
-                # Determine index of the last day in this week in the overall prices list
-                last_day = week_prices[-1]
-                last_idx = None
-                for idx, p in enumerate(prices):
-                    if p["date"] == last_day["date"] and p.get("symbol") == symbol:
-                        last_idx = idx
-                        break
-                if last_idx is None or last_idx < 200:
-                    continue
-
-                # SMA weekly crossover: SMA50 > SMA200 at end of week
-                sma50 = sum(closes_all[last_idx - 49 : last_idx + 1]) / 50
-                sma200 = sum(closes_all[last_idx - 199 : last_idx + 1]) / 200
-
-                records.append({
-                    "symbol": symbol,
-                    "week_start": week_start_str,
-                    "sma_weekly_crossover": sma50 > sma200,
-                })
-
-            if records:
-                count = await _retry_async(
-                    f"upsert_weekly_metrics({symbol})",
-                    lambda: ts_store.upsert_weekly_metrics(records),
-                )
-                total += count
-
+            count = await _process_weekly_symbol(symbol)
+            total += count
         except Exception as e:
             logger.warning(f"Error computing weekly metrics for {symbol}: {e}")
 
