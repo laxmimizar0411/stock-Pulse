@@ -48,6 +48,11 @@ Keys are exchange segments, values are arrays of security IDs.
 | `buy_quantity` | int | Total buy quantity | `buy_quantity` |
 | `sell_quantity` | int | Total sell quantity | `sell_quantity` |
 | `oi` | int | Open interest (derivatives) | `open_interest` |
+| `oi_day_high` | int | OI day high | `oi_day_high` |
+| `oi_day_low` | int | OI day low | `oi_day_low` |
+| `net_change` | float | Net price change | `net_change`, `price_change` |
+| `upper_circuit_limit` | float | Upper circuit price | `upper_circuit_limit` |
+| `lower_circuit_limit` | float | Lower circuit price | `lower_circuit_limit` |
 | `last_trade_time` | string | Timestamp of last trade | `last_trade_time` |
 | `depth.buy[]` | array | Best 5 buy levels | `depth.buy` |
 | `depth.buy[].price` | float | Bid price at level | `bid_price` (level 0) |
@@ -116,11 +121,39 @@ Returns daily OHLCV candle data for a specified date range.
 | `close[]` | array[float] | Close prices |
 | `volume[]` | array[int] | Traded volumes |
 
-### 5. Instrument List
+### 5. Intraday Minute Data
+
+**Endpoint**: `POST /v2/charts/intraday`
+
+Returns minute-level OHLCV candle data for a specified date range.
+
+**Request Body**:
+```json
+{
+  "securityId": "2885",
+  "exchangeSegment": "NSE_EQ",
+  "instrument": "EQUITY",
+  "fromDate": "2024-12-01",
+  "toDate": "2024-12-01"
+}
+```
+
+**Response Fields**:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp[]` | array[int] | Epoch timestamps (minute-level) |
+| `open[]` | array[float] | Open prices |
+| `high[]` | array[float] | High prices |
+| `low[]` | array[float] | Low prices |
+| `close[]` | array[float] | Close prices |
+| `volume[]` | array[int] | Traded volumes |
+
+### 6. Instrument List
 
 **Endpoint**: `GET /v2/instrument/{exchangeSegment}`
 
-Returns CSV with all security IDs and metadata for a given exchange segment.
+Returns CSV with all security IDs and metadata for a given exchange segment. The extractor can refresh its symbol mapping at runtime via `refresh_instrument_map()`.
 
 ## Derived/Computed Fields
 

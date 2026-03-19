@@ -965,9 +965,8 @@ class TimeSeriesStore:
                 futures_basis_pct, fii_index_futures_long_oi, fii_index_futures_short_oi,
                 options_call_oi_total, options_put_oi_total, put_call_ratio_oi,
                 put_call_ratio_volume, options_max_pain_strike, iv_atm_pct,
-                iv_percentile_1y, pcr_index_level, is_placeholder
-                iv_percentile_1y, pcr_index_level, data_source
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                iv_percentile_1y, pcr_index_level, is_placeholder, data_source
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
             ON CONFLICT (symbol, date) DO UPDATE SET
                 futures_oi = EXCLUDED.futures_oi,
                 futures_oi_change_pct = EXCLUDED.futures_oi_change_pct,
@@ -983,7 +982,7 @@ class TimeSeriesStore:
                 iv_atm_pct = EXCLUDED.iv_atm_pct,
                 iv_percentile_1y = EXCLUDED.iv_percentile_1y,
                 pcr_index_level = EXCLUDED.pcr_index_level,
-                is_placeholder = EXCLUDED.is_placeholder
+                is_placeholder = EXCLUDED.is_placeholder,
                 data_source = EXCLUDED.data_source
         """
 

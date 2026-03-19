@@ -703,10 +703,18 @@ class DhanAPIExtractor:
         close_price = ohlc.get("close", 0)
         prev_close = close_price  # prev close from OHLC close field
 
-        price_change = last_price - prev_close if prev_close else 0
-        price_change_pct = (
-            (price_change / prev_close * 100) if prev_close else 0
-        )
+        # Use net_change from API when available, else compute
+        net_change = info.get("net_change")
+        if net_change is not None:
+            price_change = net_change
+            price_change_pct = (
+                (price_change / prev_close * 100) if prev_close else 0
+            )
+        else:
+            price_change = last_price - prev_close if prev_close else 0
+            price_change_pct = (
+                (price_change / prev_close * 100) if prev_close else 0
+            )
 
         # Build standardised record matching pipeline_service expectations
         data = {
@@ -721,6 +729,7 @@ class DhanAPIExtractor:
             "low": low_price,
             "close": close_price,
             "prev_close": prev_close,
+            "net_change": price_change,
             "price_change": round(price_change, 2),
             "price_change_percent": round(price_change_pct, 2),
             "volume": info.get("volume", 0),
@@ -729,6 +738,10 @@ class DhanAPIExtractor:
             "buy_quantity": info.get("buy_quantity", 0),
             "sell_quantity": info.get("sell_quantity", 0),
             "open_interest": info.get("oi", 0),
+            "oi_day_high": info.get("oi_day_high", 0),
+            "oi_day_low": info.get("oi_day_low", 0),
+            "upper_circuit_limit": info.get("upper_circuit_limit", 0),
+            "lower_circuit_limit": info.get("lower_circuit_limit", 0),
             "last_trade_time": info.get("last_trade_time", None),
             "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -778,6 +791,135 @@ class DhanAPIExtractor:
                 "timestamp": dt.isoformat(),
             })
         return candles
+
+    # ── intraday minute data ─────────────────────────────────────────────
+
+    async def get_intraday_data(
+        self,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+    ) -> ExtractionResult:
+        """Fetch intraday minute-level OHLCV candles for a symbol.
+
+        Args:
+            symbol: Stock symbol (e.g. "RELIANCE")
+            from_date: Start date "YYYY-MM-DD"
+            to_date: End date "YYYY-MM-DD"
+        """
+        sec_id = self.get_security_id(symbol)
+        if not sec_id:
+            return ExtractionResult(
+                status=ExtractionStatus.FAILED,
+                symbol=symbol,
+                error=f"Unknown symbol: {symbol}",
+            )
+
+        payload = {
+            "securityId": sec_id,
+            "exchangeSegment": "NSE_EQ",
+            "instrument": "EQUITY",
+            "fromDate": from_date,
+            "toDate": to_date,
+        }
+
+        start = time.monotonic()
+        resp = await self._post("/v2/charts/intraday", payload)
+        latency = (time.monotonic() - start) * 1000
+
+        if resp.get("status") == "error":
+            return ExtractionResult(
+                status=ExtractionStatus.FAILED,
+                symbol=symbol,
+                error=resp.get("error", "Unknown error"),
+                latency_ms=latency,
+            )
+
+        try:
+            candles = self._parse_historical_response(symbol, resp)
+            return ExtractionResult(
+                status=ExtractionStatus.SUCCESS,
+                symbol=symbol,
+                data={"symbol": symbol, "candles": candles, "count": len(candles)},
+                latency_ms=latency,
+            )
+        except Exception as exc:
+            return ExtractionResult(
+                status=ExtractionStatus.FAILED,
+                symbol=symbol,
+                error=str(exc),
+                latency_ms=latency,
+            )
+
+    # ── instrument list refresh ───────────────────────────────────────────
+
+    async def refresh_instrument_map(self, exchange_segment: str = "NSE_EQ") -> int:
+        """Refresh the symbol→security-ID mapping from the Dhan instrument CSV.
+
+        GET /v2/instrument/{exchangeSegment} returns a CSV with columns:
+        EXCH, SEC_ID, SEM_SMST_SECURITY_ID, SEM_TRADING_SYMBOL, ...
+
+        Returns the number of symbols loaded.
+        """
+        if not self.session:
+            await self.initialize()
+
+        url = f"{self.BASE_URL}/v2/instrument/{exchange_segment}"
+        await self._enforce_rate_limit()
+        self.metrics.total_requests += 1
+        self.metrics.last_request_time = datetime.now(timezone.utc)
+
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status != 200:
+                    logger.warning(
+                        "Instrument list fetch failed: HTTP %d", resp.status
+                    )
+                    return 0
+
+                text = await resp.text()
+                self.metrics.successful_requests += 1
+
+            reader = csv.DictReader(io.StringIO(text))
+            count = 0
+            for row in reader:
+                # Common CSV column names from Dhan instrument files
+                sec_id = (
+                    row.get("SEM_SMST_SECURITY_ID")
+                    or row.get("SEC_ID")
+                    or row.get("SECURITY_ID")
+                    or ""
+                ).strip()
+                trading_symbol = (
+                    row.get("SEM_TRADING_SYMBOL")
+                    or row.get("TRADING_SYMBOL")
+                    or row.get("SYMBOL")
+                    or ""
+                ).strip()
+                # Only add equity symbols, skip derivatives
+                instrument = (
+                    row.get("SEM_INSTRUMENT_NAME")
+                    or row.get("INSTRUMENT")
+                    or ""
+                ).strip()
+                if sec_id and trading_symbol and instrument in ("EQUITY", ""):
+                    clean_sym = trading_symbol.replace("-EQ", "").replace("-BE", "").strip()
+                    if clean_sym:
+                        self._symbol_map[clean_sym] = sec_id
+                        self._security_to_symbol[sec_id] = clean_sym
+                        count += 1
+
+            logger.info(
+                "Instrument map refreshed: %d symbols from %s",
+                count,
+                exchange_segment,
+            )
+            return count
+
+        except Exception as exc:
+            self.metrics.failed_requests += 1
+            logger.error("Failed to refresh instrument map: %s", exc)
+            return 0
 
     # ── metrics ──────────────────────────────────────────────────────────
 
