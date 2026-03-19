@@ -105,7 +105,7 @@ export const getPipelineLogs = (limit = 100, eventType = null) =>
   API.get("/pipeline/logs", { params: { limit, event_type: eventType } });
 export const getPipelineMetrics = () => API.get("/pipeline/metrics");
 export const getPipelineDataSummary = () => API.get("/pipeline/data-summary");
-export const testGrowAPI = (symbol = "RELIANCE") => API.post("/pipeline/test-api", { symbol });
+export const testDhanAPI = (symbol = "RELIANCE") => API.post("/pipeline/test-api", { symbol });
 export const getDefaultSymbols = () => API.get("/pipeline/default-symbols");
 export const getSymbolCategories = () => API.get("/pipeline/symbol-categories");
 export const addPipelineSymbols = (symbols) => API.post("/pipeline/symbols/add", symbols);

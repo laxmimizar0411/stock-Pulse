@@ -32,7 +32,7 @@ from models.stock_models import (
     NewsItem, ScreenerRequest, ScreenerFilter, LLMInsightRequest
 )
 from services.mock_data import (
-    get_all_stocks, generate_news_items, generate_market_overview as mock_market_overview, INDIAN_STOCKS
+    get_all_stocks, INDIAN_STOCKS
 )
 from services.scoring_engine import generate_analysis, generate_ml_prediction
 from services.llm_service import generate_stock_insight, summarize_news
@@ -130,7 +130,7 @@ except ImportError as e:
     EXTRACTION_PIPELINE_AVAILABLE = False
     _pipeline_orchestrator = None
 
-# Import Data Pipeline Service (Groww API)
+# Import Data Pipeline Service (Dhan API)
 try:
     from services.pipeline_service import init_pipeline_service, get_pipeline_service, DataPipelineService
     from models.pipeline_models import (
@@ -138,16 +138,16 @@ try:
         LogsResponse, DataSummaryResponse, APITestRequest, APITestResponse,
         PipelineStatusResponse, JobResponse
     )
-    GROW_TOTP_TOKEN = os.environ.get('GROW_TOTP_TOKEN', '')
-    GROW_SECRET_KEY = os.environ.get('GROW_SECRET_KEY', '')
-    PIPELINE_SERVICE_AVAILABLE = bool(GROW_TOTP_TOKEN and GROW_SECRET_KEY)
+    DHAN_ACCESS_TOKEN = os.environ.get('DHAN_ACCESS_TOKEN', '')
+    DHAN_CLIENT_ID = os.environ.get('DHAN_CLIENT_ID', '')
+    PIPELINE_SERVICE_AVAILABLE = bool(DHAN_ACCESS_TOKEN and DHAN_CLIENT_ID)
     _data_pipeline_service = None
 except ImportError as e:
     logger.warning(f"Data pipeline service not available: {e}")
     PIPELINE_SERVICE_AVAILABLE = False
     _data_pipeline_service = None
-    GROW_TOTP_TOKEN = ''
-    GROW_SECRET_KEY = ''
+    DHAN_ACCESS_TOKEN = ''
+    DHAN_CLIENT_ID = ''
 
 # Import NSE Bhavcopy Extractor
 try:
@@ -168,10 +168,6 @@ except ImportError as e:
     logger.warning(f"Screener.in extractor not available: {e}")
     SCREENER_AVAILABLE = False
     _screener_extractor = None
-    PIPELINE_SERVICE_AVAILABLE = False
-    _data_pipeline_service = None
-    GROW_TOTP_TOKEN = ''
-    GROW_SECRET_KEY = ''
 
 # Configuration
 USE_REAL_DATA = os.environ.get('USE_REAL_DATA', 'true').lower() == 'true'
@@ -185,7 +181,7 @@ api_router = APIRouter(prefix="/api")
 # Log data source status
 logger.info(f"Real data available: {REAL_DATA_AVAILABLE}")
 logger.info(f"Use real data: {USE_REAL_DATA}")
-logger.info(f"Data source: {'Real (Yahoo Finance)' if REAL_DATA_AVAILABLE and USE_REAL_DATA else 'Mock Data'}")
+logger.info(f"Data source: {'Real (Yahoo Finance + Dhan API)' if REAL_DATA_AVAILABLE and USE_REAL_DATA else 'Limited (no yfinance)'}")
 
 # Cache TTL constants (used with Redis cache service)
 CACHE_TTL = 300  # 5 minutes for mock data
@@ -753,19 +749,22 @@ async def get_market_overview():
         if cached is not None:
             return cached
     
-    # Try real data first
-    overview = None
+    # Get real market data from yfinance
+    overview = {
+        "nifty_50": {"value": 0, "change": 0, "change_percent": 0},
+        "sensex": {"value": 0, "change": 0, "change_percent": 0},
+        "nifty_bank": {"value": 0, "change": 0, "change_percent": 0},
+        "india_vix": {"value": 0, "change": 0, "change_percent": 0},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": "live",
+    }
     if REAL_DATA_AVAILABLE and USE_REAL_DATA:
         try:
             indices = await get_market_indices()
             if indices:
-                overview = mock_market_overview()
                 overview.update(indices)
         except Exception as e:
-            logger.error(f"Real data failed, falling back to mock: {e}")
-    
-    if overview is None:
-        overview = mock_market_overview()
+            logger.error(f"Market indices fetch failed: {e}")
     
     # Cache in Redis
     if cache:
@@ -1324,45 +1323,28 @@ async def get_news(
     except Exception as e:
         logger.warning(f"Failed to fetch news from MongoDB: {e}")
     
-    if mongo_news:
-        return mongo_news
-    
-    # Generate fresh news and persist
-    news = generate_news_items()
-    
-    # Persist to MongoDB
-    try:
-        now = datetime.now(timezone.utc).isoformat()
-        for article in news:
-            article["stored_at"] = now
-            await db.news_articles.update_one(
-                {"title": article.get("title")},
-                {"$set": article},
-                upsert=True
-            )
-    except Exception as e:
-        logger.warning(f"Failed to persist news: {e}")
-    
-    if symbol:
-        news = [n for n in news if symbol.upper() in n.get("related_stocks", [])]
-    if sentiment:
-        news = [n for n in news if n.get("sentiment", "").upper() == sentiment.upper()]
-    
-    return news[:limit]
+    return mongo_news or []
 
 
 @api_router.get("/news/summary")
 async def get_news_summary():
-    """Get AI-generated news summary"""
-    news = generate_news_items()
-    summary = await summarize_news(news[:10])
+    """Get AI-generated news summary from stored articles"""
+    # Fetch real news from MongoDB
+    news = []
+    try:
+        cursor = db.news_articles.find({}, {"_id": 0}).sort("published_date", -1).limit(20)
+        news = await cursor.to_list(length=20)
+    except Exception as e:
+        logger.warning(f"Failed to fetch news for summary: {e}")
+
+    summary = await summarize_news(news[:10]) if news else "No news articles available."
 
     return {
         "summary": summary,
         "news_count": len(news),
-        "positive_count": len([n for n in news if n["sentiment"] == "POSITIVE"]),
-        "negative_count": len([n for n in news if n["sentiment"] == "NEGATIVE"]),
-        "neutral_count": len([n for n in news if n["sentiment"] == "NEUTRAL"]),
+        "positive_count": len([n for n in news if n.get("sentiment") == "POSITIVE"]),
+        "negative_count": len([n for n in news if n.get("sentiment") == "NEGATIVE"]),
+        "neutral_count": len([n for n in news if n.get("sentiment") == "NEUTRAL"]),
     }
 
 
@@ -1764,10 +1746,8 @@ async def run_backtest_endpoint(config: BacktestConfig):
         else:
             price_history = None
         
-        # Fallback to mock data if needed
         if not price_history:
-            from services.mock_data import generate_price_history
-            price_history = generate_price_history(symbol, days=500)
+            raise HTTPException(status_code=404, detail=f"No price history available for {symbol}")
         
         # Check Redis cache for identical backtest config
         import hashlib as _hashlib
@@ -2036,7 +2016,7 @@ async def get_extraction_status():
         "pipeline_available": EXTRACTION_PIPELINE_AVAILABLE,
         "real_data_available": REAL_DATA_AVAILABLE,
         "use_real_data": USE_REAL_DATA,
-        "current_data_source": "Real (Yahoo Finance)" if REAL_DATA_AVAILABLE and USE_REAL_DATA else "Mock Data",
+        "current_data_source": "Real (Yahoo Finance + Dhan API)" if REAL_DATA_AVAILABLE and USE_REAL_DATA else "Limited",
         "available_extractors": ["yfinance", "nse_bhavcopy"] if EXTRACTION_PIPELINE_AVAILABLE else [],
         "features": {
             "field_definitions": 160,
@@ -2138,7 +2118,7 @@ async def get_field_definitions():
         )
 
 
-# ==================== DATA PIPELINE API (Groww Integration) ====================
+# ==================== DATA PIPELINE API (Dhan API Integration) ====================
 
 @api_router.get("/pipeline/status")
 async def get_pipeline_status():
@@ -2155,14 +2135,14 @@ async def get_pipeline_status():
     if not PIPELINE_SERVICE_AVAILABLE:
         return {
             "status": "unavailable",
-            "message": "Data pipeline service not configured. GROW_TOTP_TOKEN/GROW_SECRET_KEY not set.",
+            "message": "Data pipeline service not configured. DHAN_ACCESS_TOKEN/DHAN_CLIENT_ID not set.",
             "is_running": False,
             "metrics": None,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
     if _data_pipeline_service is None:
-        _data_pipeline_service = init_pipeline_service(db=db, totp_token=GROW_TOTP_TOKEN, secret_key=GROW_SECRET_KEY)
+        _data_pipeline_service = init_pipeline_service(db=db, access_token=DHAN_ACCESS_TOKEN, client_id=DHAN_CLIENT_ID)
         await _data_pipeline_service.initialize()
 
     result = _data_pipeline_service.get_status()
@@ -2175,8 +2155,8 @@ async def get_pipeline_status():
 async def run_pipeline_extraction(request: RunExtractionRequest = None):
     """
     Manually trigger a data extraction job.
-    
-    Extracts stock market data from Groww API for specified symbols.
+
+    Extracts stock market data from Dhan API for specified symbols.
     If no symbols provided, uses default set of top Indian stocks.
     """
     global _data_pipeline_service
@@ -2184,11 +2164,11 @@ async def run_pipeline_extraction(request: RunExtractionRequest = None):
     if not PIPELINE_SERVICE_AVAILABLE:
         raise HTTPException(
             status_code=503,
-            detail="Data pipeline service not configured. GROW_TOTP_TOKEN/GROW_SECRET_KEY not set."
+            detail="Data pipeline service not configured. DHAN_ACCESS_TOKEN/DHAN_CLIENT_ID not set."
         )
     
     if _data_pipeline_service is None:
-        _data_pipeline_service = init_pipeline_service(db=db, totp_token=GROW_TOTP_TOKEN, secret_key=GROW_SECRET_KEY)
+        _data_pipeline_service = init_pipeline_service(db=db, access_token=DHAN_ACCESS_TOKEN, client_id=DHAN_CLIENT_ID)
         await _data_pipeline_service.initialize()
     
     symbols = request.symbols if request and request.symbols else None
@@ -2213,11 +2193,11 @@ async def start_pipeline_scheduler(request: StartSchedulerRequest = None):
     if not PIPELINE_SERVICE_AVAILABLE:
         raise HTTPException(
             status_code=503,
-            detail="Data pipeline service not configured. GROW_TOTP_TOKEN/GROW_SECRET_KEY not set."
+            detail="Data pipeline service not configured. DHAN_ACCESS_TOKEN/DHAN_CLIENT_ID not set."
         )
     
     if _data_pipeline_service is None:
-        _data_pipeline_service = init_pipeline_service(db=db, totp_token=GROW_TOTP_TOKEN, secret_key=GROW_SECRET_KEY)
+        _data_pipeline_service = init_pipeline_service(db=db, access_token=DHAN_ACCESS_TOKEN, client_id=DHAN_CLIENT_ID)
         await _data_pipeline_service.initialize()
     
     interval = request.interval_minutes if request else 30
@@ -2237,7 +2217,7 @@ async def stop_pipeline_scheduler():
     if not PIPELINE_SERVICE_AVAILABLE:
         raise HTTPException(
             status_code=503,
-            detail="Data pipeline service not configured. GROW_TOTP_TOKEN/GROW_SECRET_KEY not set."
+            detail="Data pipeline service not configured. DHAN_ACCESS_TOKEN/DHAN_CLIENT_ID not set."
         )
     
     if _data_pipeline_service is None:
@@ -2319,7 +2299,7 @@ async def get_pipeline_metrics():
         }
     
     if _data_pipeline_service is None:
-        _data_pipeline_service = init_pipeline_service(db=db, totp_token=GROW_TOTP_TOKEN, secret_key=GROW_SECRET_KEY)
+        _data_pipeline_service = init_pipeline_service(db=db, access_token=DHAN_ACCESS_TOKEN, client_id=DHAN_CLIENT_ID)
         await _data_pipeline_service.initialize()
     
     status = _data_pipeline_service.get_status()
@@ -2348,29 +2328,29 @@ async def get_pipeline_data_summary():
 
 
 @api_router.post("/pipeline/test-api")
-async def test_grow_api(request: APITestRequest = None):
+async def test_dhan_api(request: APITestRequest = None):
     """
-    Test the Groww API connection and fetch a sample quote.
+    Test the Dhan API connection and fetch a sample quote.
     Use this to validate API connectivity and response structure.
     """
     global _data_pipeline_service
-    
+
     if not PIPELINE_SERVICE_AVAILABLE:
         raise HTTPException(
             status_code=503,
-            detail="Data pipeline service not configured. GROW_TOTP_TOKEN/GROW_SECRET_KEY not set."
+            detail="Data pipeline service not configured. DHAN_ACCESS_TOKEN/DHAN_CLIENT_ID not set."
         )
-    
+
     if _data_pipeline_service is None:
-        _data_pipeline_service = init_pipeline_service(db=db, totp_token=GROW_TOTP_TOKEN, secret_key=GROW_SECRET_KEY)
+        _data_pipeline_service = init_pipeline_service(db=db, access_token=DHAN_ACCESS_TOKEN, client_id=DHAN_CLIENT_ID)
         await _data_pipeline_service.initialize()
-    
+
     symbol = request.symbol if request else "RELIANCE"
-    
-    if not _data_pipeline_service.grow_extractor:
-        raise HTTPException(status_code=503, detail="Groww extractor not initialized")
-    
-    result = await _data_pipeline_service.grow_extractor.get_stock_quote(symbol)
+
+    if not _data_pipeline_service.dhan_extractor:
+        raise HTTPException(status_code=503, detail="Dhan API extractor not initialized")
+
+    result = await _data_pipeline_service.dhan_extractor.get_stock_quote(symbol)
     
     return {
         "success": result.status.value == "success",
@@ -3025,16 +3005,16 @@ async def startup_event():
         try:
             _data_pipeline_service = init_pipeline_service(
                 db=db,
-                totp_token=GROW_TOTP_TOKEN,
-                secret_key=GROW_SECRET_KEY,
+                access_token=DHAN_ACCESS_TOKEN,
+                client_id=DHAN_CLIENT_ID,
                 ts_store=_ts_store,
             )
             await _data_pipeline_service.initialize()
-            logger.info("Data pipeline service initialized with Groww API + PostgreSQL bridge")
+            logger.info("Data pipeline service initialized with Dhan API + PostgreSQL bridge")
         except Exception as e:
             logger.error(f"Failed to initialize data pipeline service: {e}")
     else:
-        logger.warning("Data pipeline service not available (GROW_TOTP_TOKEN/GROW_SECRET_KEY not set)")
+        logger.warning("Data pipeline service not available (DHAN_ACCESS_TOKEN/DHAN_CLIENT_ID not set)")
     
     # Start alert queue consumer (processes alerts from Redis LIST)
     if cache and cache.is_redis_available:
@@ -3077,8 +3057,8 @@ async def shutdown_event():
     if _data_pipeline_service:
         try:
             await _data_pipeline_service.stop_scheduler()
-            if _data_pipeline_service.grow_extractor:
-                await _data_pipeline_service.grow_extractor.close()
+            if _data_pipeline_service.dhan_extractor:
+                await _data_pipeline_service.dhan_extractor.close()
             logger.info("Data pipeline service stopped")
         except Exception as e:
             logger.error(f"Error stopping pipeline service: {e}")

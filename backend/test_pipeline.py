@@ -1,12 +1,12 @@
 """
 StockPulse Pipeline Integration Test
 
-Tests the full data pipeline: Groww API -> Redis cache -> PostgreSQL -> MongoDB
+Tests the full data pipeline: Dhan API -> Redis cache -> PostgreSQL -> MongoDB
 
 Usage:
     python test_pipeline.py                # Full pipeline test
     python test_pipeline.py --db-only      # Test database connections only
-    python test_pipeline.py --api-only     # Test Groww API only (no DB)
+    python test_pipeline.py --api-only     # Test Dhan API only (no DB)
 """
 import asyncio
 import os
@@ -99,28 +99,28 @@ async def test_databases():
     return results
 
 
-async def test_groww_api():
-    """Test Groww API authentication and data extraction."""
+async def test_dhan_api():
+    """Test Dhan API authentication and data extraction."""
     print("\n" + "=" * 50)
-    print("GROWW API PIPELINE TEST")
+    print("DHAN API PIPELINE TEST")
     print("=" * 50)
 
-    grow_totp_token = os.getenv("GROW_TOTP_TOKEN")
-    grow_secret_key = os.getenv("GROW_SECRET_KEY")
+    access_token = os.getenv("DHAN_ACCESS_TOKEN")
+    client_id = os.getenv("DHAN_CLIENT_ID")
 
-    if not grow_totp_token or not grow_secret_key:
-        print("  SKIP GROW_TOTP_TOKEN or GROW_SECRET_KEY not set in .env")
+    if not access_token or not client_id:
+        print("  SKIP DHAN_ACCESS_TOKEN or DHAN_CLIENT_ID not set in .env")
         return False
 
-    from data_extraction.extractors.grow_extractor import GrowwAPIExtractor
+    from data_extraction.extractors.dhan_extractor import DhanAPIExtractor
 
-    print("\n[1/3] Authenticating with Groww API (TOTP)...")
-    extractor = GrowwAPIExtractor(totp_token=grow_totp_token, secret_key=grow_secret_key)
+    print("\n[1/3] Connecting to Dhan API...")
+    extractor = DhanAPIExtractor(access_token=access_token, client_id=client_id)
     try:
         await extractor.initialize()
-        print(f"  OK  Authenticated. Access token obtained.")
+        print(f"  OK  Session created. {len(extractor._symbol_map)} symbols mapped.")
     except Exception as e:
-        print(f"  FAIL Authentication failed: {e}")
+        print(f"  FAIL Initialization failed: {e}")
         await extractor.close()
         return False
 
@@ -135,6 +135,7 @@ async def test_groww_api():
                   f"Low: {data.get('low')}, Close: {data.get('close')}")
             print(f"       Volume: {data.get('volume')}")
             print(f"       Change: {data.get('price_change')} ({data.get('price_change_percent')}%)")
+            print(f"       Latency: {result.latency_ms:.1f}ms")
         else:
             print(f"  FAIL Quote failed: {result.error}")
     except Exception as e:
@@ -166,24 +167,24 @@ async def test_full_pipeline():
     print("FULL PIPELINE TEST (API + DB)")
     print("=" * 50)
 
-    grow_totp_token = os.getenv("GROW_TOTP_TOKEN")
-    grow_secret_key = os.getenv("GROW_SECRET_KEY")
+    access_token = os.getenv("DHAN_ACCESS_TOKEN")
+    client_id = os.getenv("DHAN_CLIENT_ID")
 
-    if not grow_totp_token or not grow_secret_key:
-        print("  SKIP GROW_TOTP_TOKEN or GROW_SECRET_KEY not set")
+    if not access_token or not client_id:
+        print("  SKIP DHAN_ACCESS_TOKEN or DHAN_CLIENT_ID not set")
         return
 
     from motor.motor_asyncio import AsyncIOMotorClient
     from services.pipeline_service import DataPipelineService
-    from data_extraction.extractors.grow_extractor import GrowwAPIExtractor
+    from data_extraction.extractors.dhan_extractor import DhanAPIExtractor
 
     # Connect MongoDB
     mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
     db_name = os.getenv("MONGO_DB_NAME", "stockpulse")
     try:
-        client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=3000)
-        await client.admin.command("ping")
-        db = client[db_name]
+        mongo_client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=3000)
+        await mongo_client.admin.command("ping")
+        db = mongo_client[db_name]
     except Exception as e:
         print(f"  FAIL MongoDB connection failed: {e}")
         return
@@ -200,8 +201,8 @@ async def test_full_pipeline():
         print(f"  PostgreSQL bridge: DISABLED ({e})")
 
     # Initialize pipeline
-    extractor = GrowwAPIExtractor(totp_token=grow_totp_token, secret_key=grow_secret_key, db=db)
-    pipeline = DataPipelineService(db=db, grow_extractor=extractor, ts_store=ts_store)
+    extractor = DhanAPIExtractor(access_token=access_token, client_id=client_id, db=db)
+    pipeline = DataPipelineService(db=db, dhan_extractor=extractor, ts_store=ts_store)
 
     print("\n  Initializing pipeline (this may start the scheduler)...")
     pipeline.AUTO_START_SCHEDULER = False  # Don't auto-start for testing
@@ -238,7 +239,7 @@ async def test_full_pipeline():
     await extractor.close()
     if ts_store:
         await ts_store.close()
-    client.close()
+    mongo_client.close()
 
 
 async def main():
@@ -248,7 +249,7 @@ async def main():
         db_results = await test_databases()
 
     if mode in ("--all", "--api-only"):
-        await test_groww_api()
+        await test_dhan_api()
 
     if mode == "--all":
         await test_full_pipeline()

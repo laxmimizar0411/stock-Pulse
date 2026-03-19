@@ -164,17 +164,17 @@ class DataPipelineService:
     DEFAULT_SCHEDULER_INTERVAL = 15  # minutes
     AUTO_START_SCHEDULER = True  # Auto-start on initialization
     
-    def __init__(self, db=None, grow_extractor=None, ts_store=None):
+    def __init__(self, db=None, dhan_extractor=None, ts_store=None):
         """
         Initialize the data pipeline service
 
         Args:
             db: MongoDB database instance
-            grow_extractor: GrowwAPIExtractor instance
+            dhan_extractor: DhanAPIExtractor instance
             ts_store: TimeSeriesStore instance for PostgreSQL persistence
         """
         self.db = db
-        self.grow_extractor = grow_extractor
+        self.dhan_extractor = dhan_extractor
         self.ts_store = ts_store  # PostgreSQL time-series store
         
         # Pipeline state
@@ -198,11 +198,11 @@ class DataPipelineService:
         
     async def initialize(self):
         """Initialize the pipeline service"""
-        logger.info("Initializing Data Pipeline Service")
-        
-        if self.grow_extractor:
-            await self.grow_extractor.initialize()
-        
+        logger.info("Initializing Data Pipeline Service (Dhan API)")
+
+        if self.dhan_extractor:
+            await self.dhan_extractor.initialize()
+
         # Load job history from database if available
         if self.db is not None:
             try:
@@ -212,12 +212,12 @@ class DataPipelineService:
                 self._job_history = history
             except Exception as e:
                 logger.warning(f"Could not load job history: {e}")
-        
+
         # Auto-start scheduler for continuous data collection
-        if self.AUTO_START_SCHEDULER and self.grow_extractor:
+        if self.AUTO_START_SCHEDULER and self.dhan_extractor:
             logger.info(f"Auto-starting scheduler with {self.DEFAULT_SCHEDULER_INTERVAL} minute interval")
             await self.start_scheduler(interval_minutes=self.DEFAULT_SCHEDULER_INTERVAL)
-        
+
         logger.info(f"Data Pipeline Service initialized with {len(self.DEFAULT_SYMBOLS)} symbols")
     
     async def start_scheduler(self, interval_minutes: int = 30):
@@ -312,15 +312,15 @@ class DataPipelineService:
             job.status = JobStatus.RUNNING
             job.started_at = datetime.now(timezone.utc)
             
-            if not self.grow_extractor:
-                raise Exception("Groww extractor not initialized")
+            if not self.dhan_extractor:
+                raise Exception("Dhan API extractor not initialized")
             
             # Run extraction based on type
             if extraction_type == "quotes":
-                results = await self.grow_extractor.extract_bulk_quotes(symbols)
+                results = await self.dhan_extractor.extract_bulk_quotes(symbols)
             else:
                 # For historical data, we'd need more parameters
-                results = await self.grow_extractor.extract_bulk_quotes(symbols)
+                results = await self.dhan_extractor.extract_bulk_quotes(symbols)
             
             # Initialize cache service for saving data
             from services.cache_service import get_cache_service
@@ -485,7 +485,7 @@ class DataPipelineService:
             "is_running": self._is_running,
             "current_job": self.current_job.to_dict() if self.current_job else None,
             "metrics": self.metrics.to_dict(),
-            "extractor_metrics": self.grow_extractor.get_metrics() if self.grow_extractor else None,
+            "extractor_metrics": self.dhan_extractor.get_metrics() if self.dhan_extractor else None,
             "default_symbols_count": len(self.DEFAULT_SYMBOLS),
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
@@ -830,20 +830,28 @@ def get_pipeline_service() -> Optional[DataPipelineService]:
     return _pipeline_service
 
 
-def init_pipeline_service(db=None, totp_token: Optional[str] = None, secret_key: Optional[str] = None, api_key: Optional[str] = None, ts_store=None) -> DataPipelineService:
-    """Initialize the global pipeline service"""
+def init_pipeline_service(
+    db=None,
+    access_token: Optional[str] = None,
+    client_id: Optional[str] = None,
+    ts_store=None,
+) -> DataPipelineService:
+    """Initialize the global pipeline service with Dhan API extractor."""
     global _pipeline_service
 
-    from data_extraction.extractors.grow_extractor import GrowwAPIExtractor
+    from data_extraction.extractors.dhan_extractor import DhanAPIExtractor
 
-    grow_extractor = None
-    if totp_token and secret_key:
-        grow_extractor = GrowwAPIExtractor(totp_token=totp_token, secret_key=secret_key, db=db)
-    elif api_key:
-        # Legacy fallback - won't work for TOTP-based auth but keeps backward compatibility
-        grow_extractor = GrowwAPIExtractor(totp_token=api_key, secret_key='', db=db)
+    dhan_extractor = None
+    if access_token and client_id:
+        dhan_extractor = DhanAPIExtractor(
+            access_token=access_token,
+            client_id=client_id,
+            db=db,
+        )
 
-    _pipeline_service = DataPipelineService(db=db, grow_extractor=grow_extractor, ts_store=ts_store)
+    _pipeline_service = DataPipelineService(
+        db=db, dhan_extractor=dhan_extractor, ts_store=ts_store
+    )
 
     return _pipeline_service
 
