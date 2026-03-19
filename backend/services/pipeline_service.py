@@ -316,10 +316,15 @@ class DataPipelineService:
                 raise Exception("Dhan API extractor not initialized")
             
             # Run extraction based on type
-            if extraction_type == "quotes":
-                results = await self.dhan_extractor.extract_bulk_quotes(symbols)
+            if extraction_type == "historical":
+                # Fetch last 30 days of daily candles for each symbol
+                from_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+                to_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                results = {}
+                for sym in symbols:
+                    res = await self.dhan_extractor.get_historical_data(sym, from_date, to_date)
+                    results[sym] = res
             else:
-                # For historical data, we'd need more parameters
                 results = await self.dhan_extractor.extract_bulk_quotes(symbols)
             
             # Initialize cache service for saving data
@@ -767,6 +772,18 @@ class DataPipelineService:
                     ] if k in data}
                 })
 
+        # 9. Intraday metrics from quote data (average_price, VWAP, buy/sell qty)
+        intraday_records = []
+        for symbol, data in results.items():
+            if not isinstance(data, dict):
+                continue
+            if any(k in data for k in ["average_price", "buy_quantity", "sell_quantity"]):
+                intraday_records.append({
+                    "symbol": symbol,
+                    "timestamp": data.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                    "vwap_intraday": data.get("average_price"),
+                })
+
         # Upsert to PostgreSQL — all table writes in same try block
         try:
             if price_records:
@@ -801,6 +818,10 @@ class DataPipelineService:
                 for rec in corporate_records:
                     await self.ts_store.upsert_corporate_action(rec)
                 self._log_event("pg_corporate_actions_upserted", {"count": len(corporate_records)})
+
+            if intraday_records:
+                count = await self.ts_store.upsert_intraday_metrics(intraday_records)
+                self._log_event("pg_intraday_upserted", {"count": count})
 
         except Exception as e:
             logger.warning(f"PostgreSQL persistence error: {e}")
