@@ -29,6 +29,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/lib/utils";
 
 export default function PostgresControl() {
   const [status, setStatus] = useState(null);
@@ -93,7 +94,7 @@ export default function PostgresControl() {
       // Wait a moment for the process to change state
       setTimeout(fetchAll, 2000);
     } catch (err) {
-      toast.error(`Failed to ${action} PostgreSQL: ${err.message}`);
+      toast.error(getApiErrorMessage(err, `Failed to ${action} PostgreSQL`));
     } finally {
       setToggling(false);
     }

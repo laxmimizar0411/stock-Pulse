@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { getTimeseriesIntraday } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/utils";
 import {
     LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip,
     ResponsiveContainer, CartesianGrid, Legend, ComposedChart, Bar,
@@ -77,7 +78,7 @@ export default function IntradayMetrics() {
             setData([...processed].reverse());
         } catch (err) {
             console.error("Error fetching intraday metrics:", err);
-            toast.error(`Failed to load intraday data for ${sym}`);
+            toast.error(getApiErrorMessage(err, `Failed to load intraday data for ${sym}`));
         } finally {
             setLoading(false);
         }

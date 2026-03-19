@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { AllocationPieChart } from "@/components/Charts";
 import MetricCard from "@/components/MetricCard";
 import { getPortfolio, addToPortfolio, removeFromPortfolio, searchStocks } from "@/lib/api";
-import { cn, formatCurrency, formatPercent, getChangeColor } from "@/lib/utils";
+import { cn, formatCurrency, formatPercent, getChangeColor, getApiErrorMessage } from "@/lib/utils";
 import {
   Briefcase,
   Plus,
@@ -136,7 +136,7 @@ export default function Portfolio() {
       resetForm();
       fetchPortfolio();
     } catch (error) {
-      toast.error("Failed to add holding");
+      toast.error(getApiErrorMessage(error, "Failed to add holding"));
     }
   };
 
@@ -146,7 +146,7 @@ export default function Portfolio() {
       toast.success(`${symbol} removed from portfolio`);
       fetchPortfolio();
     } catch (error) {
-      toast.error("Failed to remove holding");
+      toast.error(getApiErrorMessage(error, "Failed to remove holding"));
     }
   };
 

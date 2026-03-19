@@ -79,3 +79,42 @@ export function truncateText(text, maxLength) {
   if (text.length <= maxLength) return text;
   return text.substring(0, maxLength) + "...";
 }
+
+export function formatErrorMessage(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => formatErrorMessage(item))
+      .filter(Boolean)
+      .join(" | ");
+  }
+
+  if (typeof value === "object") {
+    if (typeof value.error === "string") {
+      const prefix = value.symbol ? `${value.symbol}: ` : "";
+      return `${prefix}${value.error}`;
+    }
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+}
+
+export function getApiErrorMessage(error, fallback = "Something went wrong") {
+  const detail = formatErrorMessage(error?.response?.data?.detail);
+  if (detail) return detail;
+
+  const responseError = formatErrorMessage(error?.response?.data?.error);
+  if (responseError) return responseError;
+
+  const message = formatErrorMessage(error?.message);
+  if (message) return message;
+
+  return fallback;
+}

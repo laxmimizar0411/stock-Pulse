@@ -42,6 +42,7 @@ import {
   executeMongoQuery, executePgQuery, triggerBackup,
   recordSizeSnapshot, getSizeHistory, compareCollections,
 } from "../lib/api";
+import { formatErrorMessage, getApiErrorMessage } from "../lib/utils";
 import { toast } from "sonner";
 
 // ============================================================
@@ -649,7 +650,7 @@ function MongoDBTab({ safeMode }) {
       setDeleteDialog(null);
       if (selected) loadSample(selected, samplePage);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Delete failed");
+      toast.error(getApiErrorMessage(err, "Delete failed"));
     }
   };
 
@@ -1425,7 +1426,7 @@ function ActivityTab() {
                       <div key={i} className="bg-red-500/5 border border-red-500/10 rounded-lg px-3 py-2 text-xs">
                         <div className="flex items-center gap-2 mb-1">
                           <XCircle className="h-3.5 w-3.5 text-red-400" />
-                          <span className="text-red-300 font-medium">{e.message}</span>
+                          <span className="text-red-300 font-medium">{formatErrorMessage(e.message) || "Unknown error"}</span>
                         </div>
                         <div className="text-zinc-600 text-[10px] ml-5">
                           {e.timestamp} | {e.collection} | {e.type}
@@ -1433,7 +1434,7 @@ function ActivityTab() {
                         {e.details?.errors && e.details.errors.length > 0 && (
                           <div className="ml-5 mt-1 text-zinc-500 text-[10px]">
                             {e.details.errors.slice(0, 3).map((err, j) => (
-                              <div key={j}>{err}</div>
+                              <div key={j}>{formatErrorMessage(err)}</div>
                             ))}
                           </div>
                         )}
@@ -1563,7 +1564,7 @@ function SettingsTab({ settings, onUpdate }) {
       onUpdate(res.data);
       toast.success("Settings saved");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Save failed");
+      toast.error(getApiErrorMessage(err, "Save failed"));
     } finally {
       setSaving(false);
     }
@@ -1898,7 +1899,7 @@ function CrudSection({ title, fields, fetchFn, addFn, updateFn, deleteFn, idFiel
       setAddValues({});
       fetchData();
     } catch (err) {
-      toast.error(err.response?.data?.detail || `Failed to add to ${title}`);
+      toast.error(getApiErrorMessage(err, `Failed to add to ${title}`));
     } finally {
       setSaving(false);
     }
@@ -1925,7 +1926,7 @@ function CrudSection({ title, fields, fetchFn, addFn, updateFn, deleteFn, idFiel
       setEditValues({});
       fetchData();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Update failed");
+      toast.error(getApiErrorMessage(err, "Update failed"));
     } finally {
       setSaving(false);
     }
@@ -1945,7 +1946,7 @@ function CrudSection({ title, fields, fetchFn, addFn, updateFn, deleteFn, idFiel
       setDeleteDialog(null);
       fetchData();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Delete failed");
+      toast.error(getApiErrorMessage(err, "Delete failed"));
     } finally {
       setSaving(false);
     }
@@ -2165,7 +2166,7 @@ function QueryPlaygroundTab() {
         setResults(r.data);
       }
     } catch (err) {
-      setError(err.response?.data?.detail || "Query execution failed");
+      setError(getApiErrorMessage(err, "Query execution failed"));
     } finally {
       setRunning(false);
     }
@@ -2258,7 +2259,7 @@ function QueryPlaygroundTab() {
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-xs text-red-400">
           <div className="flex items-center gap-2 font-medium"><XCircle className="h-3.5 w-3.5" /> Error</div>
-          <p className="mt-1 font-mono">{error}</p>
+          <p className="mt-1 font-mono">{formatErrorMessage(error)}</p>
         </div>
       )}
 
@@ -2334,7 +2335,7 @@ function BackupTool() {
       setResult(r.data);
       toast.success("Backup completed");
     } catch (err) {
-      setResult({ status: "error", error: err.response?.data?.detail || "Backup failed" });
+      setResult({ status: "error", error: getApiErrorMessage(err, "Backup failed") });
       toast.error("Backup failed");
     } finally {
       setRunning(false);
@@ -2473,7 +2474,7 @@ function ComparisonTool() {
       const r = await compareCollections(colA, colB);
       setResult(r.data);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Comparison failed");
+      toast.error(getApiErrorMessage(err, "Comparison failed"));
     } finally {
       setLoading(false);
     }
@@ -2619,7 +2620,7 @@ function ExportTool() {
       window.URL.revokeObjectURL(url);
       toast.success(`Exported ${target} as ${format.toUpperCase()}`);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Export failed");
+      toast.error(getApiErrorMessage(err, "Export failed"));
     } finally {
       setExporting(false);
     }

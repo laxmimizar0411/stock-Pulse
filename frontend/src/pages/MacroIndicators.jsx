@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { getTimeseriesMacroIndicators } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/utils";
 import {
     LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip,
     ResponsiveContainer, CartesianGrid, Legend,
@@ -72,7 +73,7 @@ export default function MacroIndicators() {
             setData([...rows].reverse());
         } catch (err) {
             console.error("Error fetching macro indicators:", err);
-            toast.error("Failed to load macro indicators");
+            toast.error(getApiErrorMessage(err, "Failed to load macro indicators"));
         } finally {
             setLoading(false);
         }

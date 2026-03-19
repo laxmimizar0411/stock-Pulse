@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { getWatchlist, addToWatchlist, removeFromWatchlist, updateWatchlistItem, searchStocks } from "@/lib/api";
-import { cn, formatCurrency, formatPercent, getVerdictColor, getScoreColor } from "@/lib/utils";
+import { cn, formatCurrency, formatPercent, getVerdictColor, getScoreColor, getApiErrorMessage } from "@/lib/utils";
 import { Star, Plus, Trash2, Edit, TrendingUp, TrendingDown, Search, Bell, Target } from "lucide-react";
 import { toast } from "sonner";
 
@@ -64,7 +64,7 @@ export default function Watchlist() {
       if (error.response?.status === 400) {
         toast.info("Already in watchlist");
       } else {
-        toast.error("Failed to add to watchlist");
+        toast.error(getApiErrorMessage(error, "Failed to add to watchlist"));
       }
     }
   };
@@ -75,7 +75,7 @@ export default function Watchlist() {
       toast.success(`${symbol} removed from watchlist`);
       fetchWatchlist();
     } catch (error) {
-      toast.error("Failed to remove from watchlist");
+      toast.error(getApiErrorMessage(error, "Failed to remove from watchlist"));
     }
   };
 

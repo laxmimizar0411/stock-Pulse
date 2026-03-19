@@ -42,7 +42,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
+import { cn, formatErrorMessage, getApiErrorMessage } from "@/lib/utils";
 
 // Status Badge Component
 const StatusBadge = ({ status }) => {
@@ -113,6 +113,40 @@ export default function DataPipeline() {
   const [actionLoading, setActionLoading] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [cooldownUntilMs, setCooldownUntilMs] = useState(null);
+  const [cooldownSecondsLeft, setCooldownSecondsLeft] = useState(0);
+
+  const maybeStartCooldown = useCallback((error) => {
+    const retryAfterRaw =
+      error?.response?.data?.retry_after ??
+      error?.response?.headers?.["retry-after"];
+    const retryAfterSeconds = Number.parseInt(String(retryAfterRaw ?? ""), 10);
+    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+      const until = Date.now() + retryAfterSeconds * 1000;
+      setCooldownUntilMs(until);
+      setCooldownSecondsLeft(retryAfterSeconds);
+      toast.info("Rate limit active", {
+        description: `Please retry after ${retryAfterSeconds}s.`
+      });
+      return true;
+    }
+    return false;
+  }, []);
+
+  useEffect(() => {
+    if (!cooldownUntilMs) {
+      setCooldownSecondsLeft(0);
+      return undefined;
+    }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((cooldownUntilMs - Date.now()) / 1000));
+      setCooldownSecondsLeft(remaining);
+      if (remaining <= 0) setCooldownUntilMs(null);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [cooldownUntilMs]);
 
   // Fetch all data
   const fetchData = useCallback(async () => {
@@ -155,6 +189,12 @@ export default function DataPipeline() {
 
   // Run extraction manually
   const handleRunExtraction = async () => {
+    if (cooldownSecondsLeft > 0) {
+      toast.info("Please wait", {
+        description: `Retry extraction in ${cooldownSecondsLeft}s.`
+      });
+      return;
+    }
     setActionLoading(true);
     try {
       const response = await runPipelineExtraction();
@@ -163,8 +203,9 @@ export default function DataPipeline() {
       });
       fetchData();
     } catch (error) {
+      maybeStartCooldown(error);
       toast.error("Failed to start extraction", {
-        description: error.response?.data?.detail || error.message
+        description: getApiErrorMessage(error, "Failed to start extraction")
       });
     } finally {
       setActionLoading(false);
@@ -173,6 +214,12 @@ export default function DataPipeline() {
 
   // Start scheduler
   const handleStartScheduler = async () => {
+    if (cooldownSecondsLeft > 0) {
+      toast.info("Please wait", {
+        description: `Retry scheduler action in ${cooldownSecondsLeft}s.`
+      });
+      return;
+    }
     setActionLoading(true);
     try {
       await startPipelineScheduler(30);
@@ -181,8 +228,9 @@ export default function DataPipeline() {
       });
       fetchData();
     } catch (error) {
+      maybeStartCooldown(error);
       toast.error("Failed to start scheduler", {
-        description: error.response?.data?.detail || error.message
+        description: getApiErrorMessage(error, "Failed to start scheduler")
       });
     } finally {
       setActionLoading(false);
@@ -191,14 +239,21 @@ export default function DataPipeline() {
 
   // Stop scheduler
   const handleStopScheduler = async () => {
+    if (cooldownSecondsLeft > 0) {
+      toast.info("Please wait", {
+        description: `Retry scheduler action in ${cooldownSecondsLeft}s.`
+      });
+      return;
+    }
     setActionLoading(true);
     try {
       await stopPipelineScheduler();
       toast.success("Scheduler stopped");
       fetchData();
     } catch (error) {
+      maybeStartCooldown(error);
       toast.error("Failed to stop scheduler", {
-        description: error.response?.data?.detail || error.message
+        description: getApiErrorMessage(error, "Failed to stop scheduler")
       });
     } finally {
       setActionLoading(false);
@@ -207,6 +262,12 @@ export default function DataPipeline() {
 
   // Test API
   const handleTestAPI = async () => {
+    if (cooldownSecondsLeft > 0) {
+      toast.info("Please wait", {
+        description: `Retry API test in ${cooldownSecondsLeft}s.`
+      });
+      return;
+    }
     setActionLoading(true);
     setTestResult(null);
     try {
@@ -222,9 +283,10 @@ export default function DataPipeline() {
         });
       }
     } catch (error) {
-      setTestResult({ success: false, error: error.message });
+      maybeStartCooldown(error);
+      setTestResult({ success: false, error: getApiErrorMessage(error, "API test failed") });
       toast.error("API test failed", {
-        description: error.response?.data?.detail || error.message
+        description: getApiErrorMessage(error, "API test failed")
       });
     } finally {
       setActionLoading(false);
@@ -305,10 +367,15 @@ export default function DataPipeline() {
               </div>
             </div>
             
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {cooldownSecondsLeft > 0 && (
+                <Badge variant="outline" className="border-orange-400 text-orange-300">
+                  Retry in {cooldownSecondsLeft}s
+                </Badge>
+              )}
               <Button
                 onClick={handleTestAPI}
-                disabled={actionLoading}
+                disabled={actionLoading || cooldownSecondsLeft > 0}
                 variant="outline"
                 className="border-purple-500 text-purple-400 hover:bg-purple-500/10"
               >
@@ -318,7 +385,7 @@ export default function DataPipeline() {
               
               <Button
                 onClick={handleRunExtraction}
-                disabled={actionLoading || pipelineStatus === "running"}
+                disabled={actionLoading || pipelineStatus === "running" || cooldownSecondsLeft > 0}
                 className="bg-[#3B82F6] hover:bg-[#2563EB]"
               >
                 {actionLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
@@ -328,7 +395,7 @@ export default function DataPipeline() {
               {isSchedulerRunning ? (
                 <Button
                   onClick={handleStopScheduler}
-                  disabled={actionLoading}
+                  disabled={actionLoading || cooldownSecondsLeft > 0}
                   variant="destructive"
                 >
                   <Pause className="w-4 h-4 mr-2" />
@@ -337,7 +404,7 @@ export default function DataPipeline() {
               ) : (
                 <Button
                   onClick={handleStartScheduler}
-                  disabled={actionLoading}
+                  disabled={actionLoading || cooldownSecondsLeft > 0}
                   className="bg-green-600 hover:bg-green-700"
                 >
                   <Play className="w-4 h-4 mr-2" />
@@ -615,7 +682,11 @@ export default function DataPipeline() {
                         </span>
                         <span className="text-xs flex-1">
                           {log.job_id && <span className="text-blue-400">[{log.job_id}]</span>}
-                          {log.error && <span className="text-red-400 ml-1">{log.error}</span>}
+                          {log.error && (
+                            <span className="text-red-400 ml-1">
+                              {formatErrorMessage(log.error)}
+                            </span>
+                          )}
                           {log.symbol_count && <span className="ml-1">{log.symbol_count} symbols</span>}
                           {log.successful !== undefined && (
                             <span className="ml-1">

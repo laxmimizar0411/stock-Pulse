@@ -18,6 +18,7 @@ import {
   formatNumber,
   getVerdictColor,
   getChangeColor,
+  getApiErrorMessage,
 } from "@/lib/utils";
 import {
   TrendingUp,
@@ -66,7 +67,7 @@ export default function StockAnalyzer() {
       setStock(response.data);
     } catch (error) {
       console.error("Failed to fetch stock:", error);
-      toast.error("Stock not found");
+      toast.error(getApiErrorMessage(error, "Stock not found"));
       setStock(null);
     } finally {
       setLoading(false);
@@ -102,7 +103,7 @@ export default function StockAnalyzer() {
       setLlmInsight(response.data.insight);
     } catch (error) {
       console.error("Failed to fetch LLM insight:", error);
-      toast.error("Failed to generate AI insights");
+      toast.error(getApiErrorMessage(error, "Failed to generate AI insights"));
     } finally {
       setLlmLoading(false);
     }
@@ -120,7 +121,7 @@ export default function StockAnalyzer() {
       if (error.response?.status === 400) {
         toast.info("Already in watchlist");
       } else {
-        toast.error("Failed to add to watchlist");
+        toast.error(getApiErrorMessage(error, "Failed to add to watchlist"));
       }
     }
   };

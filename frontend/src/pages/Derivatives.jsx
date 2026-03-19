@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { getTimeseriesDerivatives } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/utils";
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
     ResponsiveContainer, CartesianGrid, Legend, ComposedChart, Area,
@@ -50,7 +51,7 @@ export default function Derivatives() {
             setData([...rows].reverse());
         } catch (err) {
             console.error("Error fetching derivatives:", err);
-            toast.error(`Failed to load derivatives data for ${sym}`);
+            toast.error(getApiErrorMessage(err, `Failed to load derivatives data for ${sym}`));
         } finally {
             setLoading(false);
         }

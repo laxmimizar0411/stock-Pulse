@@ -36,7 +36,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { searchStocks } from "@/lib/api";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, getApiErrorMessage } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
 const ALERT_CONDITIONS = [
@@ -103,7 +103,7 @@ export default function Alerts() {
             setAlerts(data.alerts || []);
         } catch (error) {
             console.error("Error fetching alerts:", error);
-            toast.error("Failed to load alerts");
+            toast.error(getApiErrorMessage(error, "Failed to load alerts"));
         } finally {
             setLoading(false);
         }
@@ -172,7 +172,7 @@ export default function Alerts() {
             }
         } catch (error) {
             console.error("Error creating alert:", error);
-            toast.error("Failed to create alert");
+            toast.error(getApiErrorMessage(error, "Failed to create alert"));
         }
     };
 
@@ -190,7 +190,7 @@ export default function Alerts() {
             }
         } catch (error) {
             console.error("Error deleting alert:", error);
-            toast.error("Failed to delete alert");
+            toast.error(getApiErrorMessage(error, "Failed to delete alert"));
         }
     };
 

@@ -58,7 +58,10 @@ export function useWebSocket({
 
                 // Re-subscribe to previously subscribed symbols
                 if (subscribedSymbols.length > 0) {
-                    subscribe(subscribedSymbols);
+                    ws.current.send(JSON.stringify({
+                        action: 'subscribe',
+                        symbols: subscribedSymbols,
+                    }));
                 }
             };
 
@@ -113,7 +116,7 @@ export function useWebSocket({
             console.error('Error creating WebSocket:', e);
             setError(e.message);
         }
-    }, [getWebSocketUrl, onConnectionChange, onPriceUpdate, subscribedSymbols]);
+    }, [getWebSocketUrl, onAlertNotification, onConnectionChange, onPriceUpdate, subscribedSymbols]);
 
     // Disconnect from WebSocket
     const disconnect = useCallback(() => {

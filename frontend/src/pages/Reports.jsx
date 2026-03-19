@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { generateReport, searchStocks, downloadPdfReport } from "@/lib/api";
-import { cn, formatCurrency, getVerdictColor, getScoreColor } from "@/lib/utils";
+import { cn, formatCurrency, getVerdictColor, getScoreColor, getApiErrorMessage } from "@/lib/utils";
 import {
   FileText,
   Search,
@@ -350,7 +350,7 @@ export default function Reports() {
       toast.success("Report generated successfully");
     } catch (error) {
       console.error("Failed to generate report:", error);
-      toast.error("Failed to generate report");
+      toast.error(getApiErrorMessage(error, "Failed to generate report"));
     } finally {
       setLoading(false);
     }
@@ -473,7 +473,7 @@ export default function Reports() {
                   toast.success("PDF downloaded!");
                 } catch (error) {
                   console.error("PDF download error:", error);
-                  toast.error("Failed to download PDF");
+                  toast.error(getApiErrorMessage(error, "Failed to download PDF"));
                 }
               }}
               data-testid="download-pdf-btn"
