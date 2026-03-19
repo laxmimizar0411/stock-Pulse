@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { 
-  getPipelineStatus, 
-  runPipelineExtraction, 
+import {
+  getPipelineStatus,
+  runPipelineExtraction,
   startPipelineScheduler,
   stopPipelineScheduler,
-  getPipelineJobs, 
+  getPipelineJobs,
   getPipelineLogs,
   getPipelineMetrics,
   getPipelineHistory,
-  testGrowAPI,
+  testDhanAPI,
   getDefaultSymbols,
   getSymbolCategories
 } from "@/lib/api";
@@ -210,7 +210,7 @@ export default function DataPipeline() {
     setActionLoading(true);
     setTestResult(null);
     try {
-      const response = await testGrowAPI("RELIANCE");
+      const response = await testDhanAPI("RELIANCE");
       setTestResult(response.data);
       if (response.data?.success) {
         toast.success("API test successful", {
@@ -254,7 +254,7 @@ export default function DataPipeline() {
             Data Pipeline Monitor
           </h1>
           <p className="text-[#A1A1AA] mt-1">
-            Monitor and manage stock data extraction from Groww API
+            Monitor and manage stock data extraction from Dhan API
           </p>
         </div>
         

@@ -43,6 +43,8 @@ frontend/.env
 *token.json*
 *credentials.json*
 *.pem
+*secrets.json*
+*dhan_credentials*
 
 # Logs and debug files
 npm-debug.log*
