@@ -466,6 +466,13 @@ class DhanAPIExtractor:
     def get_symbol(self, security_id: str) -> Optional[str]:
         return self._security_to_symbol.get(security_id)
 
+    def _security_id_for_marketfeed(self, sec_id: str):
+        """Dhan marketfeed endpoints expect numeric security IDs."""
+        try:
+            return int(sec_id)
+        except (TypeError, ValueError):
+            return sec_id
+
     # ── public data methods ──────────────────────────────────────────────
 
     async def get_stock_quote(self, symbol: str) -> ExtractionResult:
@@ -479,7 +486,7 @@ class DhanAPIExtractor:
                 error=f"Unknown symbol: {symbol} – no Dhan security ID mapped",
             )
 
-        payload = {"NSE_EQ": [sec_id]}
+        payload = {"NSE_EQ": [self._security_id_for_marketfeed(sec_id)]}
         resp = await self._post("/v2/marketfeed/quote", payload)
         latency = (time.monotonic() - start) * 1000
 
@@ -529,7 +536,7 @@ class DhanAPIExtractor:
         # Batch into groups
         for i in range(0, len(valid), self.QUOTE_BATCH_SIZE):
             batch = valid[i : i + self.QUOTE_BATCH_SIZE]
-            sec_ids = [sec for _, sec in batch]
+            sec_ids = [self._security_id_for_marketfeed(sec) for _, sec in batch]
             payload = {"NSE_EQ": sec_ids}
 
             start = time.monotonic()
@@ -641,7 +648,7 @@ class DhanAPIExtractor:
 
         for i in range(0, len(valid), self.QUOTE_BATCH_SIZE):
             batch = valid[i : i + self.QUOTE_BATCH_SIZE]
-            sec_ids = [sec for _, sec in batch]
+            sec_ids = [self._security_id_for_marketfeed(sec) for _, sec in batch]
             payload = {"NSE_EQ": sec_ids}
 
             resp = await self._post("/v2/marketfeed/ltp", payload)

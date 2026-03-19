@@ -444,6 +444,11 @@ WHERE data_source = 'placeholder' AND (
 );
 """
 
+# Migration: add adjusted_close to prices_daily for backward compatibility
+PRICES_ADJUSTED_CLOSE_MIGRATION = """
+ALTER TABLE prices_daily ADD COLUMN IF NOT EXISTS adjusted_close NUMERIC(12,2);
+"""
+
 
 # Ordered list of schema migrations applied after the base schema.
 # Each migration is (version, description, sql).
@@ -452,6 +457,11 @@ MIGRATIONS = [
         "v1.1.0_derivatives_data_source",
         "derivatives_daily.data_source: nse_bhavcopy vs placeholder",
         DERIVATIVES_DATA_SOURCE_MIGRATION,
+    ),
+    (
+        "v1.2.0_prices_adjusted_close",
+        "prices_daily.adjusted_close compatibility column",
+        PRICES_ADJUSTED_CLOSE_MIGRATION,
     ),
 ]
 
