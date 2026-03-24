@@ -1401,15 +1401,11 @@ class DatabaseDashboardService:
 
         # MongoDB
         try:
-            stats = await self.db.command("dbStats")
-            coll_names = await self.db.list_collection_names()
-            doc_counts = await asyncio.gather(
-                *[self.db[c].count_documents({}) for c in coll_names]
-            )
-            collections = await self.db.list_collection_names()
-            # Count documents in all collections in parallel to avoid N+1 latency
             import asyncio
 
+            stats = await self.db.command("dbStats")
+            collections = await self.db.list_collection_names()
+            # Count documents in all collections in parallel to avoid N+1 latency
             counts = await asyncio.gather(
                 *[self.db[c].count_documents({}) for c in collections],
                 return_exceptions=True,
@@ -1425,14 +1421,10 @@ class DatabaseDashboardService:
                 "data_size_mb": round(stats.get("dataSize", 0) / (1024 * 1024), 2),
                 "storage_size_mb": round(stats.get("storageSize", 0) / (1024 * 1024), 2),
                 "index_size_mb": round(stats.get("indexSize", 0) / (1024 * 1024), 2),
-                "total_docs": sum(doc_counts),
-            }
-        except Exception:
-            logger.warning("Failed to collect MongoDB size snapshot", exc_info=True)
                 "total_docs": total_docs,
             }
         except Exception:
-            logger.warning("Failed to collect MongoDB size stats", exc_info=True)
+            logger.warning("Failed to collect MongoDB size snapshot", exc_info=True)
 
         # PostgreSQL
         if self.ts_store and self.ts_store._is_initialized:
