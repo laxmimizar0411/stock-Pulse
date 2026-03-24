@@ -76,6 +76,17 @@ try:
 except ImportError:
     WEBSOCKET_AVAILABLE = False
 
+# Import Stock Pulse Brain engine
+try:
+    from brain.engine import brain_engine
+    from brain.routes import router as brain_router
+    BRAIN_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Brain engine not available: {e}")
+    BRAIN_AVAILABLE = False
+    brain_engine = None
+    brain_router = None
+
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -2811,6 +2822,9 @@ async def normalize_alt_data(symbol: str, payload: Dict[str, Any]):
 # Include sub-routers into api_router first, then mount api_router on app
 api_router.include_router(db_dashboard_router)
 api_router.include_router(pg_control_router)
+if BRAIN_AVAILABLE and brain_router:
+    app.include_router(brain_router)
+    logger.info("Brain API routes registered at /api/brain/")
 app.include_router(api_router)
 
 # CORS middleware - default to localhost only, never open wildcard
@@ -3137,6 +3151,14 @@ async def startup_event():
     except Exception as e:
         logger.debug(f"Redis health check start: {e}")
 
+    # Start Stock Pulse Brain engine
+    if BRAIN_AVAILABLE and brain_engine:
+        try:
+            await brain_engine.start()
+            logger.info("Stock Pulse Brain engine started")
+        except Exception as e:
+            logger.warning(f"Brain engine start warning: {e}")
+
     logger.info("StockPulse API ready!")
 
 
@@ -3181,5 +3203,13 @@ async def shutdown_event():
         await _ts_store.close()
         logger.info("PostgreSQL time-series store closed")
     
+    # Stop Brain engine
+    if BRAIN_AVAILABLE and brain_engine:
+        try:
+            await brain_engine.stop()
+            logger.info("Brain engine stopped")
+        except Exception as e:
+            logger.warning(f"Brain engine stop warning: {e}")
+
     client.close()
     logger.info("Database connection closed")
