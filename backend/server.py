@@ -19,6 +19,7 @@ from services.db_dashboard_service import DatabaseDashboardService
 from routes.db_dashboard import router as db_dashboard_router, init_dashboard_router
 from services.pg_control_service import PgControlService
 from routes.pg_control import router as pg_control_router, init_pg_control_router
+from routes.brain import router as brain_router, init_brain_router
 
 # Configure logging early
 logging.basicConfig(
@@ -118,6 +119,15 @@ except ImportError as e:
     logger.warning(f"Alerts service not available: {e}")
     ALERTS_AVAILABLE = False
     alerts_service = None
+
+# Import Brain Intelligence System
+try:
+    from brain.registry import get_brain_registry, init_brain, shutdown_brain
+    from brain.models.signals import BrainStatus
+    BRAIN_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Brain intelligence system not available: {e}")
+    BRAIN_AVAILABLE = False
 
 # Import Data Extraction Pipeline
 try:
@@ -2713,6 +2723,7 @@ async def get_screener_metrics():
 # Include sub-routers into api_router first, then mount api_router on app
 api_router.include_router(db_dashboard_router)
 api_router.include_router(pg_control_router)
+api_router.include_router(brain_router)
 app.include_router(api_router)
 
 # CORS middleware - default to localhost only, never open wildcard
@@ -3039,6 +3050,15 @@ async def startup_event():
     except Exception as e:
         logger.debug(f"Redis health check start: {e}")
 
+    # Initialize Brain Intelligence System
+    if BRAIN_AVAILABLE:
+        try:
+            brain_registry = await init_brain()
+            init_brain_router(brain_registry)
+            logger.info("Brain intelligence system initialized")
+        except Exception as e:
+            logger.warning(f"Brain initialization warning: {e}")
+
     logger.info("StockPulse API ready!")
 
 
@@ -3072,6 +3092,14 @@ async def shutdown_event():
         await stop_health_check()
     except Exception:
         pass
+
+    # Shutdown Brain Intelligence System
+    if BRAIN_AVAILABLE:
+        try:
+            await shutdown_brain()
+            logger.info("Brain intelligence system shut down")
+        except Exception as e:
+            logger.warning(f"Brain shutdown warning: {e}")
 
     # Close Redis connection
     if cache:
