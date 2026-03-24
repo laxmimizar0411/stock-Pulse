@@ -221,6 +221,11 @@ export const getTimeseriesIntraday = (symbol, params = {}) =>
 export const getTimeseriesWeeklyMetrics = (symbol, params = {}) =>
   API.get(`/timeseries/weekly-metrics/${symbol}`, { params });
 
+// Brain
+export const getBrainFeatures = (symbol) => API.get(`/brain/features/${symbol}`);
+export const trainBrainModel = (payload) => API.post("/brain/models/train", payload);
+export const placePaperOrder = (payload) => API.post("/execution/orders/paper", payload);
+
 // PostgreSQL Control & Monitoring
 export const getPostgresStatus = () => API.get("/database/postgres-control/status");
 export const togglePostgres = (action) =>
