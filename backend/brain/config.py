@@ -4,9 +4,6 @@ Brain Configuration
 Central configuration for all Brain modules with feature flags,
 weights, thresholds, and model parameters. All values can be
 overridden via environment variables prefixed with BRAIN_.
-Brain Configuration — Central configuration for the Stock Pulse Brain.
-
-Loads config from environment variables with sensible defaults.
 """
 
 import os
@@ -74,20 +71,19 @@ class RiskConfig:
 
 
 @dataclass
-class ModuleFlags:
-    """Feature flags to enable/disable Brain modules."""
-    features_enabled: bool = True
-    regime_enabled: bool = True
-    ml_models_enabled: bool = True
-    signal_fusion_enabled: bool = True
-    sentiment_enabled: bool = False      # Disabled until Phase 4
-    agents_enabled: bool = False         # Disabled until Phase 5
-    risk_engine_enabled: bool = False    # Disabled until Phase 6
-    options_enabled: bool = False        # Disabled until Phase 8
-    tax_enabled: bool = False            # Disabled until Phase 8
-    rag_enabled: bool = False            # Disabled until Phase 5
-    deep_learning_enabled: bool = False  # Disabled until Phase 7
-from typing import Optional
+class SentimentConfig:
+    """Sentiment analysis pipeline parameters."""
+    half_life_hours: float = 24.0            # Time-decay half-life for article weighting
+    max_article_age_hours: int = 48          # Discard articles older than this
+    max_articles_per_source: int = 30        # Limit per RSS source
+    min_fetch_interval_minutes: int = 5      # Rate limit on RSS fetches
+    finbert_enabled: bool = True             # Use FinBERT (needs transformers)
+    vader_enabled: bool = True               # Use VADER (fast fallback)
+    llm_enabled: bool = False                # Use LLM for contextual sentiment
+    finbert_weight: float = 0.50             # Ensemble weight for FinBERT
+    vader_weight: float = 0.20               # Ensemble weight for VADER
+    llm_weight: float = 0.30                 # Ensemble weight for LLM
+    cache_ttl_seconds: int = 300             # 5-minute cache TTL
 
 
 @dataclass
@@ -142,7 +138,7 @@ class LLMSettings:
 
 @dataclass
 class RiskSettings:
-    """Risk management settings."""
+    """Risk management settings (infrastructure-level)."""
     max_portfolio_drawdown_pct: float = float(os.getenv("RISK_MAX_DD_PCT", "20.0"))
     half_position_drawdown_pct: float = float(os.getenv("RISK_HALF_DD_PCT", "10.0"))
     halt_new_entries_drawdown_pct: float = float(os.getenv("RISK_HALT_DD_PCT", "15.0"))
@@ -166,13 +162,39 @@ class MarketHoursSettings:
 
 
 @dataclass
+class ModuleFlags:
+    """Feature flags to enable/disable Brain modules."""
+    features_enabled: bool = True
+    regime_enabled: bool = True
+    ml_models_enabled: bool = True
+    signal_fusion_enabled: bool = True
+    sentiment_enabled: bool = True           # Phase 4 implemented
+    agents_enabled: bool = False             # Disabled until Phase 5
+    risk_engine_enabled: bool = False        # Disabled until Phase 6
+    options_enabled: bool = False            # Disabled until Phase 8
+    tax_enabled: bool = False                # Disabled until Phase 8
+    rag_enabled: bool = False                # Disabled until Phase 5
+    deep_learning_enabled: bool = False      # Disabled until Phase 7
+
+
+@dataclass
 class BrainConfig:
     """Master Brain configuration."""
+    # Phase 0-3 core config
     fusion_weights: SignalFusionWeights = field(default_factory=SignalFusionWeights)
     confidence_thresholds: ConfidenceThresholds = field(default_factory=ConfidenceThresholds)
     regime: RegimeConfig = field(default_factory=RegimeConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    sentiment: SentimentConfig = field(default_factory=SentimentConfig)
     modules: ModuleFlags = field(default_factory=ModuleFlags)
+
+    # Infrastructure settings
+    kafka: KafkaSettings = field(default_factory=KafkaSettings)
+    feature_store: FeatureStoreSettings = field(default_factory=FeatureStoreSettings)
+    ml: MLSettings = field(default_factory=MLSettings)
+    llm: LLMSettings = field(default_factory=LLMSettings)
+    risk_infra: RiskSettings = field(default_factory=RiskSettings)
+    market_hours: MarketHoursSettings = field(default_factory=MarketHoursSettings)
 
     # Event bus settings
     event_bus_max_queue_size: int = 10000
@@ -185,6 +207,16 @@ class BrainConfig:
     # Feature settings
     feature_computation_batch_size: int = 50
     feature_cache_ttl_seconds: int = 300  # 5 minutes
+
+    # Signal thresholds (aliases for confidence_thresholds)
+    signal_suppress_below: float = 40.0
+    signal_watchlist_below: float = 60.0
+    signal_actionable_below: float = 80.0
+    signal_high_conviction_above: float = 80.0
+
+    # System
+    debug: bool = os.getenv("BRAIN_DEBUG", "false").lower() == "true"
+    version: str = "0.1.0"
 
     @classmethod
     def from_env(cls) -> "BrainConfig":
@@ -210,7 +242,32 @@ class BrainConfig:
         config.risk.kelly_fraction = _env_float("KELLY_FRACTION", config.risk.kelly_fraction)
         config.risk.daily_loss_cap_pct = _env_float("DAILY_LOSS_CAP_PCT", config.risk.daily_loss_cap_pct)
 
+        # Override sentiment params from env
+        config.sentiment.half_life_hours = _env_float("SENTIMENT_HALF_LIFE_HOURS", config.sentiment.half_life_hours)
+        config.sentiment.finbert_enabled = _env_bool("SENTIMENT_FINBERT_ENABLED", config.sentiment.finbert_enabled)
+        config.sentiment.vader_enabled = _env_bool("SENTIMENT_VADER_ENABLED", config.sentiment.vader_enabled)
+        config.sentiment.llm_enabled = _env_bool("SENTIMENT_LLM_ENABLED", config.sentiment.llm_enabled)
+
         return config
+
+    def to_dict(self) -> dict:
+        """Serialize config to dict (for health endpoints)."""
+        return {
+            "version": self.version,
+            "debug": self.debug,
+            "kafka_enabled": self.kafka.enabled,
+            "kafka_servers": self.kafka.bootstrap_servers,
+            "ml_model_dir": self.ml.model_dir,
+            "mlflow_uri": self.ml.mlflow_tracking_uri,
+            "risk_max_dd": self.risk_infra.max_portfolio_drawdown_pct,
+            "risk_kelly": self.risk_infra.kelly_fraction,
+            "signal_thresholds": {
+                "suppress": self.signal_suppress_below,
+                "watchlist": self.signal_watchlist_below,
+                "actionable": self.signal_actionable_below,
+                "high_conviction": self.signal_high_conviction_above,
+            },
+        }
 
 
 # Singleton instance
@@ -229,43 +286,7 @@ def reset_brain_config():
     """Reset config singleton (useful for testing)."""
     global _config
     _config = None
-    """Root configuration for the Stock Pulse Brain."""
-    kafka: KafkaSettings = field(default_factory=KafkaSettings)
-    feature_store: FeatureStoreSettings = field(default_factory=FeatureStoreSettings)
-    ml: MLSettings = field(default_factory=MLSettings)
-    llm: LLMSettings = field(default_factory=LLMSettings)
-    risk: RiskSettings = field(default_factory=RiskSettings)
-    market_hours: MarketHoursSettings = field(default_factory=MarketHoursSettings)
-
-    # Signal thresholds
-    signal_suppress_below: float = 40.0
-    signal_watchlist_below: float = 60.0
-    signal_actionable_below: float = 80.0  # 60-80 = actionable
-    signal_high_conviction_above: float = 80.0
-
-    # System
-    debug: bool = os.getenv("BRAIN_DEBUG", "false").lower() == "true"
-    version: str = "0.1.0"
-
-    def to_dict(self) -> dict:
-        """Serialize config to dict (for health endpoints)."""
-        return {
-            "version": self.version,
-            "debug": self.debug,
-            "kafka_enabled": self.kafka.enabled,
-            "kafka_servers": self.kafka.bootstrap_servers,
-            "ml_model_dir": self.ml.model_dir,
-            "mlflow_uri": self.ml.mlflow_tracking_uri,
-            "risk_max_dd": self.risk.max_portfolio_drawdown_pct,
-            "risk_kelly": self.risk.kelly_fraction,
-            "signal_thresholds": {
-                "suppress": self.signal_suppress_below,
-                "watchlist": self.signal_watchlist_below,
-                "actionable": self.signal_actionable_below,
-                "high_conviction": self.signal_high_conviction_above,
-            },
-        }
 
 
-# Global singleton
-brain_config = BrainConfig()
+# Global singleton alias (used by newer code)
+brain_config = get_brain_config()

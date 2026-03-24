@@ -320,26 +320,52 @@ def generate_sentiment_signal(
     sentiment_data: Optional[Dict[str, float]] = None,
 ) -> RawSignal:
     """
-    Generate a sentiment signal.
+    Generate a sentiment signal from the sentiment aggregator output.
 
-    Stub until Phase 4 (Sentiment Pipeline) is implemented.
-    Returns neutral signal with zero confidence.
+    Takes the output from SentimentAggregator.get_sentiment_for_signal()
+    and converts it into a normalized [-1, +1] signal with confidence.
+
+    Confidence is based on:
+    - Article count (more articles = more reliable)
+    - Agreement between sentiment sources (FinBERT vs VADER vs LLM)
+    - Strength of the sentiment score
     """
-    if sentiment_data is None:
+    if sentiment_data is None or not sentiment_data:
         return RawSignal(
             source="sentiment",
             score=0.0,
             confidence=0.0,
-            details={"status": "not_implemented"},
+            details={"status": "no_data"},
         )
 
     score = sentiment_data.get("sentiment_score", 0.0)
     article_count = sentiment_data.get("article_count", 0)
-    confidence = min(article_count / 10.0, 1.0) * 0.8  # more articles = more confidence
+    positive_prob = sentiment_data.get("positive_prob", 0.0)
+    negative_prob = sentiment_data.get("negative_prob", 0.0)
+
+    if article_count == 0:
+        return RawSignal(
+            source="sentiment",
+            score=0.0,
+            confidence=0.0,
+            details={"status": "no_articles"},
+        )
+
+    # Confidence from article count: 1 article = 0.15, 5 = 0.6, 10+ = 0.8
+    count_confidence = min(article_count / 12.0, 0.8)
+
+    # Confidence from sentiment strength: strong sentiment = higher confidence
+    strength_confidence = min(abs(score) * 0.8, 0.3)
+
+    # Confidence from probability clarity: clear positive/negative = higher confidence
+    prob_clarity = abs(positive_prob - negative_prob)
+    clarity_confidence = prob_clarity * 0.2
+
+    confidence = min(1.0, count_confidence + strength_confidence + clarity_confidence)
 
     return RawSignal(
         source="sentiment",
-        score=score,
+        score=max(-1.0, min(1.0, score)),
         confidence=confidence,
         details=sentiment_data,
     )
