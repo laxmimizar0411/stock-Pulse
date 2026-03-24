@@ -789,11 +789,8 @@ def apply_quality_boosters(stock_data: Dict, is_long_term: bool) -> Tuple[float,
 
 
 def calculate_ml_adjustment() -> float:
-    """Simulate ML model adjustment (±10 points max)"""
-    # In production, this would call actual ML models
-    # For MVP, simulate with random adjustment weighted towards 0
-    adjustment = random.gauss(0, 4)
-    return max(-10, min(10, adjustment))
+    """Deterministic placeholder ML adjustment (no randomness)."""
+    return 0.0
 
 
 def calculate_confidence_score(stock_data: Dict, ml_confidence: float = None) -> Dict:
@@ -1139,27 +1136,27 @@ def generate_analysis(stock_data: Dict) -> Dict:
 
 
 def generate_ml_prediction(stock_data: Dict) -> Dict:
-    """Generate mock ML predictions"""
+    """Generate deterministic baseline ML predictions."""
     tech = stock_data.get("technicals", {})
     rsi = tech.get("rsi_14", 50)
     
     # Simulate price direction based on technicals
     if rsi < 35:
         direction = "UP"
-        prob = random.uniform(0.55, 0.70)
+        prob = 0.66
     elif rsi > 65:
         direction = "DOWN"
-        prob = random.uniform(0.55, 0.65)
+        prob = 0.62
     else:
         direction = "NEUTRAL"
-        prob = random.uniform(0.45, 0.55)
+        prob = 0.54
     
     return {
         "price_direction_short": direction,
         "price_direction_probability": round(prob, 2),
-        "volatility_forecast": round(random.uniform(15, 35), 2),
-        "anomaly_score": round(random.uniform(0, 0.3), 2),
-        "sentiment_score": round(random.uniform(-0.5, 0.5), 2),
+        "volatility_forecast": 22.5,
+        "anomaly_score": 0.08,
+        "sentiment_score": 0.0,
     }
 
 

@@ -287,6 +287,7 @@ class DataPipelineService:
         """
         if symbols is None:
             symbols = self.DEFAULT_SYMBOLS
+        symbols = self._normalize_symbols(symbols)
         
         # Create job
         job = PipelineJob(
@@ -467,6 +468,18 @@ class DataPipelineService:
             self.status = PipelineStatus.SCHEDULED if self._is_running else PipelineStatus.IDLE
         
         return job
+
+    def _normalize_symbols(self, symbols: List[str]) -> List[str]:
+        """Normalize symbols for consistent contract handling across sources."""
+        normalized = []
+        seen = set()
+        for raw in symbols:
+            sym = str(raw or "").strip().upper()
+            if not sym or sym in seen:
+                continue
+            seen.add(sym)
+            normalized.append(sym)
+        return normalized
     
     def _log_event(self, event_type: str, data: Dict):
         """Log a pipeline event"""

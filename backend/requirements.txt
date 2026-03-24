@@ -141,3 +141,7 @@ slowapi==0.1.9
 asyncpg==0.31.0
 alembic==1.13.2
 SQLAlchemy==2.0.37
+
+# Stock Pulse Brain — Event streaming
+aiokafka==0.11.0
+lz4==4.3.3

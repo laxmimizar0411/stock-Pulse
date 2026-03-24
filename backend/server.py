@@ -41,6 +41,21 @@ from services.cache_service import init_cache_service, get_cache_service, CacheS
 from services.alert_consumer import start_alert_consumer, stop_alert_consumer
 from services.rate_limiter import rate_limiter_middleware
 from services.timeseries_store import init_timeseries_store, get_timeseries_store, TimeSeriesStore
+from models.brain_models import (
+    BrainFeatureResponse,
+    OrderRequest,
+    OrderResponse,
+    TrainModelRequest,
+    TrainModelResponse,
+)
+from services.order_execution_service import OrderExecutionService
+from services.risk_service import RiskService
+from services.event_bus_service import EventBusService
+from services.audit_service import emit_audit_event
+from services.options_intelligence_service import compute_options_signal
+from services.alternative_data_service import build_alt_data_features
+from ml.training import train_baseline_model
+from ml.registry import register_model_version
 
 # Import real market data service
 try:
@@ -61,6 +76,17 @@ try:
     WEBSOCKET_AVAILABLE = True
 except ImportError:
     WEBSOCKET_AVAILABLE = False
+
+# Import Stock Pulse Brain engine
+try:
+    from brain.engine import brain_engine
+    from brain.routes import router as brain_router
+    BRAIN_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Brain engine not available: {e}")
+    BRAIN_AVAILABLE = False
+    brain_engine = None
+    brain_router = None
 
 
 ROOT_DIR = Path(__file__).parent
@@ -108,6 +134,9 @@ cache = init_cache_service(redis_url)
 # PostgreSQL time-series DSN
 timeseries_dsn = os.environ.get('TIMESERIES_DSN', 'postgresql://localhost:5432/stockpulse_ts')
 _ts_store = None  # initialized async in startup
+_event_bus = EventBusService()
+_risk_service = RiskService()
+_order_execution_service = OrderExecutionService(risk_service=_risk_service)
 
 # Initialize Alerts Service
 try:
@@ -2720,10 +2749,93 @@ async def get_screener_metrics():
     }
 
 
+@api_router.get("/brain/features/{symbol}", response_model=BrainFeatureResponse)
+async def get_brain_features(symbol: str):
+    ts = get_timeseries_store()
+    if not ts or not ts._is_initialized:
+        raise HTTPException(status_code=503, detail="Time-series store unavailable")
+    snapshot = await ts.get_brain_feature_snapshot(symbol.upper())
+    if not snapshot:
+        return {"symbol": symbol.upper(), "available": False, "snapshot": None}
+    quality_flags = []
+    if not snapshot.get("technical"):
+        quality_flags.append("missing_technical")
+    if not snapshot.get("fundamentals"):
+        quality_flags.append("missing_fundamentals")
+    response = {
+        "symbol": symbol.upper(),
+        "available": True,
+        "snapshot": {
+            "symbol": symbol.upper(),
+            "as_of_date": str(snapshot.get("as_of_date")),
+            "technical": snapshot.get("technical") or {},
+            "fundamentals": snapshot.get("fundamentals") or {},
+            "valuation": snapshot.get("valuation") or {},
+            "derivatives": snapshot.get("derivatives") or {},
+            "risk": snapshot.get("risk") or {},
+            "ml_features": snapshot.get("ml_features") or {},
+            "freshness": {"as_of_date": str(snapshot.get("as_of_date"))},
+            "quality_flags": quality_flags,
+        },
+    }
+    return response
+
+
+@api_router.post("/brain/models/train", response_model=TrainModelResponse)
+async def train_brain_model(req: TrainModelRequest):
+    ts = get_timeseries_store()
+    if not ts or not ts._is_initialized:
+        raise HTTPException(status_code=503, detail="Time-series store unavailable")
+    # Minimal training dataset from latest screener rows.
+    rows = await ts.get_screener_data(limit=500)
+    metrics = train_baseline_model(rows, horizon_days=req.horizon_days)
+    version = register_model_version(req.model_name, metrics)
+    _event_bus.publish("brain.model.trained", {"model_name": req.model_name, "model_version": version})
+    emit_audit_event("brain_model_trainer", "train_model", {"model_name": req.model_name, "model_version": version})
+    return {
+        "model_name": req.model_name,
+        "model_version": version,
+        "trained_at": datetime.now(timezone.utc),
+        "metrics": metrics,
+    }
+
+
+@api_router.post("/execution/orders/paper", response_model=OrderResponse)
+async def place_paper_order(req: OrderRequest):
+    result = _order_execution_service.place_order(req.model_dump())
+    _event_bus.publish("execution.order.paper", {"symbol": req.symbol, "side": req.side, "status": result.get("status")})
+    emit_audit_event("execution_api", "place_paper_order", req.model_dump())
+    return {
+        "order_id": (result.get("execution") or {}).get("order_id", ""),
+        "status": result.get("status", "rejected"),
+        "message": result.get("message", ""),
+        "risk_checks": result.get("risk_checks", {}),
+    }
+
+
+@api_router.get("/brain/options-signal/{symbol}")
+async def get_options_signal(symbol: str):
+    ts = get_timeseries_store()
+    if not ts or not ts._is_initialized:
+        raise HTTPException(status_code=503, detail="Time-series store unavailable")
+    rows = await ts.get_derivatives(symbol.upper(), limit=1)
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No derivatives data for {symbol.upper()}")
+    return {"symbol": symbol.upper(), "signal": compute_options_signal(rows[0])}
+
+
+@api_router.post("/brain/alt-data/{symbol}")
+async def normalize_alt_data(symbol: str, payload: Dict[str, Any]):
+    return build_alt_data_features(symbol, payload)
+
+
 # Include sub-routers into api_router first, then mount api_router on app
 api_router.include_router(db_dashboard_router)
 api_router.include_router(pg_control_router)
 api_router.include_router(brain_router)
+if BRAIN_AVAILABLE and brain_router:
+    app.include_router(brain_router)
+    logger.info("Brain API routes registered at /api/brain/")
 app.include_router(api_router)
 
 # CORS middleware - default to localhost only, never open wildcard
@@ -3058,6 +3170,13 @@ async def startup_event():
             logger.info("Brain intelligence system initialized")
         except Exception as e:
             logger.warning(f"Brain initialization warning: {e}")
+    # Start Stock Pulse Brain engine
+    if BRAIN_AVAILABLE and brain_engine:
+        try:
+            await brain_engine.start()
+            logger.info("Stock Pulse Brain engine started")
+        except Exception as e:
+            logger.warning(f"Brain engine start warning: {e}")
 
     logger.info("StockPulse API ready!")
 
@@ -3111,5 +3230,13 @@ async def shutdown_event():
         await _ts_store.close()
         logger.info("PostgreSQL time-series store closed")
     
+    # Stop Brain engine
+    if BRAIN_AVAILABLE and brain_engine:
+        try:
+            await brain_engine.stop()
+            logger.info("Brain engine stopped")
+        except Exception as e:
+            logger.warning(f"Brain engine stop warning: {e}")
+
     client.close()
     logger.info("Database connection closed")

@@ -1438,6 +1438,54 @@ class TimeSeriesStore:
             
             return stats
 
+    async def get_brain_feature_snapshot(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Build a point-in-time consolidated feature snapshot for one symbol.
+        """
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                WITH lp AS (
+                    SELECT * FROM prices_daily WHERE symbol = $1 ORDER BY date DESC LIMIT 1
+                ),
+                lt AS (
+                    SELECT * FROM technical_indicators WHERE symbol = $1 ORDER BY date DESC LIMIT 1
+                ),
+                lf AS (
+                    SELECT * FROM fundamentals_quarterly WHERE symbol = $1 ORDER BY period_end DESC LIMIT 1
+                ),
+                lv AS (
+                    SELECT * FROM valuation_daily WHERE symbol = $1 ORDER BY date DESC LIMIT 1
+                ),
+                lmf AS (
+                    SELECT * FROM ml_features_daily WHERE symbol = $1 ORDER BY date DESC LIMIT 1
+                ),
+                lr AS (
+                    SELECT * FROM risk_metrics WHERE symbol = $1 ORDER BY date DESC LIMIT 1
+                ),
+                ld AS (
+                    SELECT * FROM derivatives_daily WHERE symbol = $1 ORDER BY date DESC LIMIT 1
+                )
+                SELECT
+                    lp.date AS as_of_date,
+                    row_to_json(lt) AS technical,
+                    row_to_json(lf) AS fundamentals,
+                    row_to_json(lv) AS valuation,
+                    row_to_json(ld) AS derivatives,
+                    row_to_json(lr) AS risk,
+                    row_to_json(lmf) AS ml_features
+                FROM lp
+                LEFT JOIN lt ON TRUE
+                LEFT JOIN lf ON TRUE
+                LEFT JOIN lv ON TRUE
+                LEFT JOIN ld ON TRUE
+                LEFT JOIN lr ON TRUE
+                LEFT JOIN lmf ON TRUE
+                """,
+                symbol.upper(),
+            )
+            return dict(row) if row else None
+
 
 # Module-level singleton
 _ts_store: Optional[TimeSeriesStore] = None
