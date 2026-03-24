@@ -1,40 +1,21 @@
 """
 Stock Pulse Brain — Central Intelligence System
 
-The Brain is the core intelligence engine that fuses ML models, LLM agents,
-sentiment analysis, market regime detection, and risk management into
-unified trading signals for the Indian stock market.
-
-Modules:
-    - event_bus: Async in-process event bus (Kafka-compatible interface)
-    - features: Feature engineering pipeline (50+ features)
-    - regime: HMM market regime detection (bull/bear/sideways)
-    - models_ml: ML model ecosystem (statistical, gradient boosting, deep learning)
-    - signals: Multi-signal fusion engine with confidence scoring
-    - sentiment: FinBERT + LLM sentiment pipeline
-    - agents: Multi-agent LLM system with dialectical debate
-    - risk: Risk management (stop-loss, position sizing, VaR)
-    - explainability: SHAP-based prediction explanations
-    - rag: RAG knowledge base with vector search
-    - options: Options & derivatives intelligence
-    - tax: Indian tax optimization engine
-"""
-
-__version__ = "0.1.0"
 The Brain is the core AI-powered analysis and prediction engine for Stock Pulse.
 It implements:
-  - Event-driven architecture (Kafka)
-  - Feature engineering pipeline (Feast + Redis)
-  - AI/ML prediction models (TFT, LSTM, XGBoost, GARCH)
+  - Event-driven architecture (async event bus, Kafka-compatible)
+  - Feature engineering pipeline (50+ features)
+  - AI/ML prediction models (XGBoost, LightGBM, ARIMA, GARCH)
   - Multi-signal fusion with confidence scoring
-  - LLM multi-agent research system (LangGraph)
+  - FinBERT + LLM sentiment analysis pipeline
+  - Market regime detection (HMM — bull/bear/sideways)
   - Risk management and position sizing
-  - Market regime detection (HMM)
-  - Options/derivatives intelligence
-  - Real-time streaming and decision engine
+  - SHAP-based prediction explanations
+  - LLM multi-agent research system (planned)
+  - Options/derivatives intelligence (planned)
 
 All Brain modules live under `backend/brain/` and communicate
-via Kafka events, maintaining clean separation from the existing
+via the event bus, maintaining clean separation from the existing
 `backend/services/` and `backend/data_extraction/` code.
 """
 

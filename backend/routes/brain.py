@@ -189,9 +189,35 @@ async def explain_prediction(symbol: str):
 
 # ==================== PHASE 4: Sentiment ====================
 
+@router.get("/sentiment/market")
+async def get_market_sentiment():
+    """Get overall market sentiment aggregated from all news sources."""
+    if _brain_registry is None or not _brain_registry.is_started:
+        raise HTTPException(status_code=503, detail="Brain not initialized")
+
+    sentiment = _brain_registry.get_module("sentiment")
+    if sentiment is None:
+        raise HTTPException(status_code=501, detail="Sentiment pipeline not yet implemented")
+
+    return await sentiment.get_market_sentiment()
+
+
+@router.get("/sentiment/stats")
+async def get_sentiment_stats():
+    """Get sentiment pipeline statistics (scraper, model info, cache)."""
+    if _brain_registry is None or not _brain_registry.is_started:
+        raise HTTPException(status_code=503, detail="Brain not initialized")
+
+    sentiment = _brain_registry.get_module("sentiment")
+    if sentiment is None:
+        raise HTTPException(status_code=501, detail="Sentiment pipeline not yet implemented")
+
+    return sentiment.get_stats()
+
+
 @router.get("/sentiment/{symbol}")
 async def get_sentiment(symbol: str):
-    """Get sentiment analysis for a symbol."""
+    """Get sentiment analysis for a specific symbol (FinBERT + VADER ensemble)."""
     if _brain_registry is None or not _brain_registry.is_started:
         raise HTTPException(status_code=503, detail="Brain not initialized")
 
@@ -203,19 +229,6 @@ async def get_sentiment(symbol: str):
     if result is None:
         raise HTTPException(status_code=404, detail=f"No sentiment data for {symbol}")
     return result
-
-
-@router.get("/sentiment/market")
-async def get_market_sentiment():
-    """Get overall market sentiment."""
-    if _brain_registry is None or not _brain_registry.is_started:
-        raise HTTPException(status_code=503, detail="Brain not initialized")
-
-    sentiment = _brain_registry.get_module("sentiment")
-    if sentiment is None:
-        raise HTTPException(status_code=501, detail="Sentiment pipeline not yet implemented")
-
-    return await sentiment.get_market_sentiment()
 
 
 # ==================== PHASE 5: Research ====================
