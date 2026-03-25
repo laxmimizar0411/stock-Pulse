@@ -69,8 +69,7 @@ class BrainRegistry:
         self._event_bus = await init_event_bus()
         logger.info("Brain EventBus initialized")
 
-        # 2. Initialize enabled modules (to be populated in later phases)
-        # Each phase will add its module initialization here
+        # 2. Initialize enabled modules
         enabled = []
         disabled = []
 
@@ -93,6 +92,46 @@ class BrainRegistry:
                 enabled.append(name)
             else:
                 disabled.append(name)
+
+        # Initialize sentiment module (Phase 4)
+        if self._config.modules.sentiment_enabled:
+            try:
+                from brain.sentiment.sentiment_aggregator import SentimentAggregator
+                from brain.sentiment.finbert_analyzer import FinBERTAnalyzer
+                from brain.sentiment.news_scraper import NewsScraper
+                from brain.sentiment.entity_extractor import EntityExtractor
+
+                scraper = NewsScraper(
+                    max_age_hours=self._config.sentiment.max_article_age_hours,
+                    max_articles_per_source=self._config.sentiment.max_articles_per_source,
+                )
+                analyzer = FinBERTAnalyzer(
+                    use_finbert=self._config.sentiment.finbert_enabled,
+                    use_vader=self._config.sentiment.vader_enabled,
+                )
+                extractor = EntityExtractor()
+
+                # Wire LLM sentiment if enabled
+                llm_fn = None
+                if self._config.sentiment.llm_enabled:
+                    try:
+                        from services.llm_service import analyze_sentiment
+                        llm_fn = analyze_sentiment
+                    except ImportError:
+                        logger.warning("LLM sentiment function not available")
+
+                aggregator = SentimentAggregator(
+                    scraper=scraper,
+                    analyzer=analyzer,
+                    extractor=extractor,
+                    event_bus=self._event_bus,
+                    llm_sentiment_fn=llm_fn,
+                    half_life_hours=self._config.sentiment.half_life_hours,
+                )
+                self.register_module("sentiment", aggregator)
+                logger.info("Sentiment module initialized")
+            except Exception as e:
+                logger.warning("Failed to initialize sentiment module: %s", e)
 
         self._started = True
         logger.info(
