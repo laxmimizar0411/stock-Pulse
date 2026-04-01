@@ -50,6 +50,11 @@
     <text x="830" y="100" text-anchor="middle" fill="#e2e8f0" font-size="11">DLQ</text>
   </g>
 
+  <!-- Pydantic → Kafka (validates incoming messages) -->
+  <line x1="180" y1="95" x2="198" y2="95" stroke="#a0aec0" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <!-- Kafka → DLQ (failed messages routed out) -->
+  <line x1="762" y1="95" x2="778" y2="95" stroke="#fc8181" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
   <!-- Kafka -->
   <g filter="url(#shadow)">
     <rect x="200" y="75" width="560" height="60" rx="10" fill="url(#kafka)"/>
@@ -121,6 +126,8 @@
   <line x1="680" y1="450" x2="460" y2="340" stroke="#b8860b" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrowhead)"/>
   <!-- Arrow from Airflow to Feast (triggers feature materialization) -->
   <line x1="680" y1="450" x2="640" y2="440" stroke="#b8860b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <!-- Arrow from Airflow to MinIO (Parquet archival) -->
+  <line x1="790" y1="410" x2="795" y2="340" stroke="#b8860b" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrowhead)"/>
 
   <!-- Arrow to OUT -->
   <line x1="405" y1="502" x2="405" y2="545" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
