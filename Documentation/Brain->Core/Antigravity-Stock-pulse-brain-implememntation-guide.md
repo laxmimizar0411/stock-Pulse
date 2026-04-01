@@ -1,8 +1,12 @@
-# Stock Pulse Brain — Step-by-Step Implementation Plan
+# Stock Pulse Brain — Step-by-Step Implementation Guide
 
-The Stock Pulse Brain is the central intelligence system for Stock Pulse — an AI-powered Indian stock market analysis and prediction platform. This plan bridges the gap between the **existing codebase** (FastAPI backend, React frontend, basic data extraction, scoring engine, Redis/MongoDB/PostgreSQL) and the **target architecture** described in the two Brain documents.
+The Stock Pulse Brain is the central intelligence system for Stock Pulse — an AI-powered Indian stock market analysis and prediction platform. Its **primary mission is maximizing profit through swing trading** (~80% focus on 2–30 day swing trades, ~10% intraday, ~10% positional/long-term).
 
-The plan is organized into **6 Phases over ~12 months**, each building on the previous, with clear milestones and deliverables.
+This plan bridges the gap between the **existing codebase** (FastAPI backend, React frontend, basic data extraction, scoring engine, Redis/MongoDB/PostgreSQL) and the **target architecture** described in the unified Brain document (`Stock-Pulse-Brain-Unified-V.md`).
+
+The plan is organized into **6 Phases**, each building on the previous, with clear milestones and deliverables.
+
+> **Note:** This document and the unified guide (`Stock-Pulse-Brain-Unified-V.md`) are kept in sync. The unified guide is the authoritative reference for architecture and design; this document is the step-by-step implementation roadmap with file paths.
 
 ---
 
@@ -12,7 +16,7 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 
 | Component | Status | Location |
 |-----------|--------|----------|
-| FastAPI Backend | ✅ Running | [backend/server.py](file:///Users/shraddheysatpute/Downloads/Stock-Monitering-App/Stock-Pulse-5/backend/server.py) |
+| FastAPI Backend | ✅ Running | `backend/server.py` |
 | Data Extractors | ✅ YFinance, Dhan, Groww, Screener, NSE Bhavcopy | `backend/data_extraction/extractors/` |
 | Pipeline Orchestrator | ✅ Basic | `backend/data_extraction/pipeline/orchestrator.py` |
 | Scoring Engine | ✅ Basic | `backend/services/scoring_engine.py` |
@@ -29,63 +33,69 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 
 ### What the Brain Requires (Gap Analysis)
 
-| Brain Module | Gap | Priority |
-|-------------|-----|----------|
+| Brain Module | Gap | Phase |
+|-------------|-----|-------|
 | Event backbone (Kafka) | ❌ Not implemented | Phase 1 |
 | Feature Store (Feast + Redis) | ❌ Only basic Redis cache exists | Phase 1 |
-| Real-time streaming (Flink) | ❌ Not implemented | Phase 2 |
 | AI/ML Models (TFT, LSTM, XGBoost, GARCH) | ❌ No models trained | Phase 2 |
 | Signal Generation Engine | ⚠️ Basic scoring exists, needs multi-signal fusion | Phase 2 |
 | HMM Regime Detection | ❌ Not implemented | Phase 3 |
 | LLM Multi-Agent System (LangGraph) | ❌ Only basic LLM service exists | Phase 3 |
 | FinBERT Sentiment Pipeline | ❌ Not implemented | Phase 3 |
 | Risk Management Engine | ❌ No systematic risk management | Phase 3 |
-| Options/Derivatives Intelligence | ❌ Not implemented | Phase 4 |
+| Sector Rotation Strategy | ❌ Not implemented | Phase 3 |
+| Dividend Intelligence | ❌ Not implemented | Phase 3 |
+| Regulatory Event Calendar | ❌ Not implemented | Phase 3 |
+| Corporate Governance Scoring | ❌ Not implemented | Phase 3 |
+| RAG Knowledge Base (Qdrant) | ❌ Not implemented | Phase 3 |
+| IPO Analysis Module | ❌ Not implemented | Phase 4 |
+| Indian Tax Optimization | ❌ Not implemented | Phase 4 |
+| Paper Trading Validation | ❌ Not implemented | Phase 4 |
+| Real-time Streaming (Faust/Bytewax) | ❌ Not implemented | Phase 5 |
 | Reinforcement Learning (PPO/FinRL) | ❌ Not implemented | Phase 5 |
 | Foundation Models (Kronos/TimesFM) | ❌ Not implemented | Phase 5 |
-| RAG Knowledge Base (Qdrant) | ❌ Not implemented | Phase 3 |
-| Paper Trading Simulation | ❌ Not implemented | Phase 4 |
-| Tax Optimization Module | ❌ Not implemented | Phase 4 |
-| Corporate Governance Scoring | ❌ Not implemented | Phase 3 |
+| Security & Secrets Management | ❌ Not implemented | Phase 6 |
+| System Health Dashboard | ❌ Not implemented | Phase 6 |
+| Watchlist & Multi-Portfolio | ❌ Not implemented | Phase 6 |
+| MF/ETF Analysis | ❌ Not implemented | Phase 6 |
 
 ---
 
-## Phase 1 — Data Foundation & Event Infrastructure (Months 1–2)
+## Phase 1 — Data Foundation & Event Infrastructure
 
 > **Goal**: Build the data backbone — robust data ingestion, event streaming with Kafka, feature store, and enhanced storage layer.
 
 ### Step 1.1 — Apache Kafka Event Bus Setup
 
 - [ ] Add Kafka (KRaft mode, no ZooKeeper) to `docker-compose.yml`
-- [ ] Create Kafka producer/consumer wrapper module (`backend/brain/events/kafka_manager.py`)
+- [ ] Create Kafka producer/consumer wrapper module
 - [ ] Define core Kafka topics: `raw-ticks`, `normalized-ohlcv`, `signals`, `orders`, `alerts`, `features`
-- [ ] Create Protobuf schemas for market data messages (`backend/brain/schemas/`)
+- [ ] Create Pydantic schemas for market data messages
 - [ ] Implement dead-letter queue (DLQ) for failed message processing
 - [ ] Add Kafka health checks and monitoring
 
 **Files**:
-- [NEW] `backend/brain/__init__.py`
-- [NEW] `backend/brain/events/__init__.py`
-- [NEW] `backend/brain/events/kafka_manager.py`
-- [NEW] `backend/brain/events/topics.py`
-- [NEW] `backend/brain/schemas/market_data.proto`
+- `backend/brain/__init__.py` *(exists)*
+- `backend/brain/events/__init__.py` *(exists)*
+- `backend/brain/events/kafka_manager.py` *(exists)*
+- `backend/brain/events/topics.py` *(exists)*
+- `backend/brain/schemas/market_data.py` *(exists — Pydantic, not Protobuf)*
 - [MODIFY] `docker-compose.yml` — add Kafka service
 
 ### Step 1.2 — Enhanced Data Ingestion Pipeline
 
 - [ ] Upgrade existing extractors to publish data to Kafka topics
-- [ ] Add Angel One SmartAPI extractor (primary free data source per Brain doc)
 - [ ] Enhance NSE Bhavcopy extractor for CM-UDiFF new format
-- [ ] Implement data normalization layer (canonical Protobuf schema)
+- [ ] Implement data normalization layer (canonical Pydantic schema)
 - [ ] Add circuit breaker detection and handling
 - [ ] Implement reconnection with exponential backoff for WebSocket feeds
 - [ ] Add data quality checks: OHLC integrity, volume validation, price within circuit limits
 
 **Files**:
-- [NEW] `backend/brain/ingestion/__init__.py`
-- [NEW] `backend/brain/ingestion/angel_one_extractor.py`
-- [NEW] `backend/brain/ingestion/normalizer.py`
-- [NEW] `backend/brain/ingestion/data_quality.py`
+- `backend/brain/ingestion/__init__.py` *(exists)*
+- `backend/brain/ingestion/normalizer.py` *(exists)*
+- `backend/brain/ingestion/data_quality.py` *(exists)*
+- `backend/brain/ingestion/kafka_bridge.py` *(exists)*
 - [MODIFY] `backend/data_extraction/extractors/yfinance_comprehensive_extractor.py` — add Kafka publishing
 - [MODIFY] `backend/data_extraction/extractors/nse_bhavcopy_extractor.py` — CM-UDiFF support
 
@@ -99,40 +109,42 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [ ] Implement India-specific features: delivery volume %, FII/DII flows, promoter holding %
 
 **Files**:
-- [NEW] `backend/brain/features/__init__.py`
-- [NEW] `backend/brain/features/feature_store.py`
-- [NEW] `backend/brain/features/technical_indicators.py`
-- [NEW] `backend/brain/features/fundamental_features.py`
-- [NEW] `backend/brain/features/india_specific_features.py`
-- [NEW] `backend/brain/features/feature_registry.py`
+- `backend/brain/features/__init__.py` *(exists)*
+- `backend/brain/features/feature_store.py` *(exists)*
+- `backend/brain/features/technical_features.py` *(exists)*
+- `backend/brain/features/fundamental_features.py` *(exists)*
+- `backend/brain/features/cross_sectional_features.py` *(exists)*
+- `backend/brain/features/macro_features.py` *(exists)*
+- `backend/brain/features/feature_registry.py` *(exists)*
+- `backend/brain/features/feature_pipeline.py` *(exists)*
+- `backend/brain/features/timeseries_fetchers.py` *(exists)*
 - [NEW] `feature_store/feature_repo/` — Feast feature repository config
 
 ### Step 1.4 — Storage Layer Enhancement
 
-- [ ] Evaluate and optionally add QuestDB for time-series (6–13x faster than TimescaleDB)
 - [ ] Set up MinIO (S3-compatible) for data lake / raw archival (Parquet format)
 - [ ] Implement Redis TTL strategy: 1–5s during market hours, relaxed post-market
 - [ ] Set up Apache Airflow for batch pipeline orchestration
 - [ ] Create batch DAGs: `dag_daily_bhavcopy`, `dag_fii_dii`, `dag_fundamentals`, `dag_corporate_actions`, `dag_macro_data`
 
 **Files**:
-- [NEW] `backend/brain/storage/__init__.py`
-- [NEW] `backend/brain/storage/questdb_client.py`
-- [NEW] `backend/brain/storage/minio_client.py`
+- `backend/brain/storage/__init__.py` *(exists)*
+- `backend/brain/storage/minio_client.py` *(exists)*
+- `backend/brain/storage/parquet_writer.py` *(exists)*
 - [NEW] `backend/brain/batch/__init__.py`
 - [NEW] `backend/brain/batch/airflow_dags/dag_daily_bhavcopy.py`
 - [NEW] `backend/brain/batch/airflow_dags/dag_fii_dii.py`
 - [NEW] `backend/brain/batch/airflow_dags/dag_fundamentals.py`
-- [MODIFY] `docker-compose.yml` — add QuestDB, MinIO, Airflow services
+- [MODIFY] `docker-compose.yml` — add MinIO, Airflow services
 
 ### Phase 1 Milestone
 > ✅ Market data flows through Kafka, features are computed and stored in Feast, batch pipelines run post-market via Airflow. All existing functionality continues to work.
 
 ---
 
-## Phase 2 — AI/ML Model Training & Signal Generation (Months 3–5)
+## Phase 2 — AI/ML Model Training & Swing Signal Generation
 
-> **Goal**: Train core prediction models, build the signal generation engine with multi-signal fusion and confidence scoring.
+> **Goal**: Train core prediction models optimized for **swing trading (2–30 day holds)**, build the signal generation engine with multi-signal fusion and confidence scoring.
 
 ### Step 2.1 — ML Training Infrastructure
 
@@ -143,53 +155,44 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [ ] Set up Optuna for Bayesian hyperparameter optimization with pruning
 
 **Files**:
-- [NEW] `backend/brain/ml/__init__.py`
-- [NEW] `backend/brain/ml/training/__init__.py`
-- [NEW] `backend/brain/ml/training/walk_forward.py`
-- [NEW] `backend/brain/ml/training/cpcv.py`
-- [NEW] `backend/brain/ml/training/feature_selection.py`
-- [NEW] `backend/brain/ml/training/experiment_tracker.py`
+- `backend/brain/models_ml/__init__.py` *(exists)*
+- `backend/brain/models_ml/base_model.py` *(exists)*
+- `backend/brain/models_ml/validation.py` *(exists — walk-forward + CPCV)*
 - [MODIFY] `docker-compose.yml` — add MLflow service
 
-### Step 2.2 — Core Prediction Models
+### Step 2.2 — Core Prediction Models (Swing-Trading Optimized)
 
-- [ ] Train **GARCH(1,1)** + EGARCH for volatility forecasting (Tier 1 baseline)
-- [ ] Train **XGBoost / LightGBM / CatBoost** for directional prediction (Tier 2 workhorses)
-- [ ] Train **LSTM with attention** for intraday & short-term forecasting (Tier 3)
-- [ ] Train **Temporal Fusion Transformer (TFT)** for multi-horizon forecasting (primary model)
-- [ ] Train **N-BEATS** and **N-HiTS** for long-horizon forecasting
+- [ ] Train **GARCH(1,1)** + EGARCH for volatility forecasting → optimal swing entry timing via volatility regime (Tier 1)
+- [ ] Train **XGBoost / LightGBM / CatBoost** for **primary swing direction (2–30 day horizon)** (Tier 2 — Primary ★)
+- [ ] Train **LSTM with attention** for intraday pattern detection (Tier 3 — 10% allocation)
+- [ ] Train **Temporal Fusion Transformer (TFT)** for **multi-horizon swing targets (5d/10d/20d quantile forecasts)** (Primary ★)
+- [ ] Train **N-BEATS** and **N-HiTS** for positional horizon (1–6 months, 10% allocation)
 - [ ] Export models to ONNX format for production inference (5–20ms target)
-- [ ] Implement model serving via BentoML or ONNX Runtime
+- [ ] Implement model serving via ONNX Runtime
 
 **Files**:
-- [NEW] `backend/brain/ml/models/__init__.py`
-- [NEW] `backend/brain/ml/models/garch_model.py`
-- [NEW] `backend/brain/ml/models/gradient_boosting.py`
-- [NEW] `backend/brain/ml/models/lstm_attention.py`
-- [NEW] `backend/brain/ml/models/tft_model.py`
-- [NEW] `backend/brain/ml/models/nbeats_model.py`
-- [NEW] `backend/brain/ml/models/nhits_model.py`
-- [NEW] `backend/brain/ml/serving/__init__.py`
-- [NEW] `backend/brain/ml/serving/model_server.py`
-- [NEW] `backend/brain/ml/serving/onnx_inference.py`
+- `backend/brain/models_ml/statistical/garch_model.py` *(exists)*
+- `backend/brain/models_ml/statistical/arima_model.py` *(exists)*
+- `backend/brain/models_ml/gradient_boosting/xgboost_model.py` *(exists)*
+- `backend/brain/models_ml/gradient_boosting/lightgbm_model.py` *(exists)*
+- `backend/brain/models_ml/gradient_boosting/ensemble.py` *(exists)*
+- `backend/brain/models_ml/deep_learning/` *(placeholder exists — LSTM-Attention, TFT, N-BEATS)*
 
-### Step 2.3 — Signal Generation Engine
+### Step 2.3 — Swing Signal Generation Engine
 
 - [ ] Build multi-signal fusion architecture: Technical + Fundamental + Sentiment + Macro + Volume
-- [ ] Implement confidence scoring formula: technical alignment (30%) + sentiment strength (25%) + fundamental support (20%) + volume confirmation (15%) + macro headwinds (10%)
+- [ ] Implement **swing-weighted** confidence scoring: Technical(35%) + Sentiment(20%) + Fundamental(20%) + Volume(15%) + Macro(10%)
 - [ ] Implement signal thresholds: <40% suppressed, 40–60% watchlist, 60–80% actionable, >80% high-conviction
-- [ ] Build stacked ensemble meta-model (XGBoost meta-learner)
 - [ ] Implement meta-labeling (direction model + confidence model)
-- [ ] Implement dynamic signal weighting based on context (earnings season, RBI policy, trending markets)
-- [ ] Create structured signal output JSON: `{ticker, direction, confidence, target, stop_loss, contributing_factors, explanation}`
+- [ ] Add **swing-specific signal fields**: `expected_hold_days`, `risk_reward_ratio`, `swing_phase` (breakout/pullback/trend)
+- [ ] Create structured signal output JSON: `{ticker, direction, confidence, target, stop_loss, expected_hold_days, risk_reward_ratio, swing_phase, contributing_factors, explanation}`
 
 **Files**:
-- [NEW] `backend/brain/signals/__init__.py`
-- [NEW] `backend/brain/signals/signal_generator.py`
-- [NEW] `backend/brain/signals/confidence_scorer.py`
-- [NEW] `backend/brain/signals/signal_fusion.py`
-- [NEW] `backend/brain/signals/meta_labeling.py`
-- [NEW] `backend/brain/signals/signal_models.py` — Pydantic models for signal schema
+- `backend/brain/signals/__init__.py` *(exists)*
+- `backend/brain/signals/signal_generator.py` *(exists)*
+- `backend/brain/signals/confidence_scorer.py` *(exists)*
+- `backend/brain/signals/signal_fusion.py` *(exists)*
+- `backend/brain/models/signals.py` *(exists — Pydantic signal schemas)*
 
 ### Step 2.4 — Backtesting Engine Enhancement
 
@@ -201,33 +204,34 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 
 **Files**:
 - [MODIFY] `backend/services/backtesting_service.py` — upgrade with VectorBT, Indian cost model
-- [NEW] `backend/brain/backtesting/__init__.py`
+- `backend/brain/backtesting/__init__.py` *(exists)*
+- `backend/brain/risk/indian_costs.py` *(exists — STT, GST, stamp duty, SEBI, DP)*
 - [NEW] `backend/brain/backtesting/vectorbt_engine.py`
-- [NEW] `backend/brain/backtesting/indian_costs.py`
 - [NEW] `backend/brain/backtesting/performance_metrics.py`
 - [NEW] `backend/brain/backtesting/quantstats_reports.py`
 
 ### Phase 2 Milestone
-> ✅ ML models trained and serving predictions via ONNX Runtime. Signal generation produces unified Buy/Sell/Hold signals with confidence scores. Backtesting validates strategies against historical data with realistic Indian market costs.
+> ✅ ML models trained and serving predictions via ONNX Runtime, optimized for swing trading horizons. Signal generation produces unified Buy/Sell/Hold signals with confidence scores and swing-specific fields (hold_days, risk_reward, swing_phase). Backtesting validates strategies against historical data with realistic Indian market costs.
 
 ---
 
-## Phase 3 — Intelligence Layer & LLM Agents (Months 5–7)
+## Phase 3 — Intelligence Layer, LLM Agents & Risk Management
 
-> **Goal**: Build the LLM multi-agent system, sentiment pipeline, HMM regime detection, risk management, governance scoring, and RAG knowledge base.
+> **Goal**: Build the LLM multi-agent system (2-tier), sentiment pipeline, HMM regime detection, risk management, governance scoring, RAG knowledge base, sector rotation, dividend intelligence, and regulatory event calendar.
 
 ### Step 3.1 — HMM Market Regime Detection
 
 - [ ] Train 3-state Gaussian HMM (bull, bear, sideways) on: daily returns, rolling volatility, India VIX, FII/FPI flows, INR/USD
-- [ ] Implement regime-conditional model routing (specialist models per regime)
+- [ ] Implement regime-conditional model routing (specialist swing models per regime)
 - [ ] Implement regime-aware strategy selection and position sizing
 - [ ] Add complementary regime detection: K-Means/GMM, CUSUM change-point detection
 
 **Files**:
-- [NEW] `backend/brain/regime/__init__.py`
-- [NEW] `backend/brain/regime/hmm_detector.py`
-- [NEW] `backend/brain/regime/regime_router.py`
+- `backend/brain/regime/__init__.py` *(exists)*
+- `backend/brain/regime/hmm_detector.py` *(exists)*
+- `backend/brain/regime/regime_store.py` *(exists)*
 - [NEW] `backend/brain/regime/changepoint_detector.py`
+- [NEW] `backend/brain/regime/regime_router.py`
 
 ### Step 3.2 — FinBERT Sentiment Pipeline
 
@@ -239,18 +243,18 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [ ] Build earnings call analyzer: management discussion vs Q&A section separation, tone divergence detection
 
 **Files**:
-- [NEW] `backend/brain/sentiment/__init__.py`
-- [NEW] `backend/brain/sentiment/finbert_model.py`
-- [NEW] `backend/brain/sentiment/nlp_pipeline.py`
-- [NEW] `backend/brain/sentiment/news_scrapers.py`
+- `backend/brain/sentiment/__init__.py` *(exists)*
+- `backend/brain/sentiment/finbert_analyzer.py` *(exists)*
+- `backend/brain/sentiment/entity_extractor.py` *(exists)*
+- `backend/brain/sentiment/news_scraper.py` *(exists)*
+- `backend/brain/sentiment/sentiment_aggregator.py` *(exists)*
 - [NEW] `backend/brain/sentiment/social_scraper.py`
 - [NEW] `backend/brain/sentiment/earnings_analyzer.py`
-- [NEW] `backend/brain/sentiment/sentiment_ensemble.py`
 
-### Step 3.3 — LLM Multi-Agent System
+### Step 3.3 — LLM Multi-Agent System (2-Tier)
 
 - [ ] Set up **LangGraph** for agent orchestration (graph-based state machine)
-- [ ] Implement tiered LLM routing: Tier 1 (Claude/GPT-5 for deep analysis), Tier 2 (GPT-4.1 mini for extraction), Tier 3 (local FinGPT/Mistral)
+- [ ] Implement 2-tier LLM routing: **Tier 1** (Claude/GPT-5 for deep analysis), **Tier 2** (GPT-4.1-mini for extraction/lightweight tasks)
 - [ ] Build 4 analyst agents: Fundamental, Technical, Sentiment, Macro
 - [ ] Build dialectical research agents: Bull Researcher + Bear Researcher → Research Synthesizer
 - [ ] Build Trader Agent (synthesis to actionable signals) + Risk Management Agent (veto power)
@@ -258,7 +262,7 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [ ] Add semantic caching for repeated LLM queries
 
 **Files**:
-- [NEW] `backend/brain/agents/__init__.py`
+- `backend/brain/agents/__init__.py` *(exists)*
 - [NEW] `backend/brain/agents/orchestrator.py` — LangGraph graph definition
 - [NEW] `backend/brain/agents/fundamental_analyst.py`
 - [NEW] `backend/brain/agents/technical_analyst.py`
@@ -284,12 +288,14 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [ ] Implement SEBI margin requirement checks
 
 **Files**:
-- [NEW] `backend/brain/risk/__init__.py`
-- [NEW] `backend/brain/risk/stop_loss.py`
-- [NEW] `backend/brain/risk/position_sizing.py`
+- `backend/brain/risk/__init__.py` *(exists)*
+- `backend/brain/risk/stop_loss_engine.py` *(exists)*
+- `backend/brain/risk/position_sizer.py` *(exists)*
+- `backend/brain/risk/capital_protection.py` *(exists)*
+- `backend/brain/risk/portfolio_risk.py` *(exists)*
+- `backend/brain/risk/indian_costs.py` *(exists)*
 - [NEW] `backend/brain/risk/var_calculator.py`
 - [NEW] `backend/brain/risk/stress_testing.py`
-- [NEW] `backend/brain/risk/capital_protection.py`
 - [NEW] `backend/brain/risk/sebi_compliance.py`
 
 ### Step 3.5 — RAG Knowledge Base
@@ -302,7 +308,7 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [ ] Implement agentic RAG for multi-hop financial queries
 
 **Files**:
-- [NEW] `backend/brain/rag/__init__.py`
+- `backend/brain/rag/__init__.py` *(placeholder exists)*
 - [NEW] `backend/brain/rag/vector_store.py`
 - [NEW] `backend/brain/rag/document_processor.py`
 - [NEW] `backend/brain/rag/retriever.py`
@@ -322,7 +328,43 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [NEW] `backend/brain/governance/promoter_tracker.py`
 - [NEW] `backend/brain/governance/red_flag_detector.py`
 
-### Step 3.7 — SHAP Explainability
+### Step 3.7 — Sector Rotation Engine
+
+- [ ] Track capital flows across IT, Banking, Pharma, Auto, FMCG, Metals, Realty, Energy sectors
+- [ ] Detect rotation signals using relative strength (RS), money flow index (MFI), and FII/DII sector-level data
+- [ ] Auto-adjust swing portfolio sector weights based on rotation signals
+- [ ] Integration with HMM regime for sector-regime conditional weights
+
+**Files**:
+- [NEW] `backend/brain/sector/__init__.py`
+- [NEW] `backend/brain/sector/sector_rotation.py`
+- [NEW] `backend/brain/sector/sector_mapper.py` — stock-to-sector mapping for NIFTY 500
+
+### Step 3.8 — Dividend Intelligence
+
+- [ ] Track ex-dates, yield, payout ratio, dividend growth rate
+- [ ] Flag stocks approaching ex-date for swing timing (avoid buying just before ex-date for short-term)
+- [ ] Integrate with tax module for post-2020 dividend taxation impact
+- [ ] Dividend scoring for fundamental analysis overlay
+
+**Files**:
+- [NEW] `backend/brain/dividends/__init__.py`
+- [NEW] `backend/brain/dividends/dividend_tracker.py`
+- [NEW] `backend/brain/dividends/dividend_scorer.py`
+
+### Step 3.9 — Regulatory Event Calendar
+
+- [ ] Auto-track SEBI board meetings, RBI policy dates, Union Budget, quarterly results season, F&O expiry schedule
+- [ ] Pre-event risk parameter tightening
+- [ ] Post-event signal boosting
+- [ ] Auto-fetch: NSE corporate actions API, RBI announcement calendar
+
+**Files**:
+- [NEW] `backend/brain/calendar/__init__.py`
+- [NEW] `backend/brain/calendar/regulatory_calendar.py`
+- [NEW] `backend/brain/calendar/event_risk_adjuster.py`
+
+### Step 3.10 — SHAP Explainability
 
 - [ ] Generate SHAP values for all XGBoost/ensemble predictions
 - [ ] Create waterfall chart visualizations for the dashboard
@@ -330,102 +372,81 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [ ] Generate natural language explanations from SHAP values + agent reasoning
 
 **Files**:
-- [NEW] `backend/brain/explainability/__init__.py`
-- [NEW] `backend/brain/explainability/shap_explainer.py`
+- `backend/brain/explainability/__init__.py` *(exists)*
+- `backend/brain/explainability/shap_explainer.py` *(exists)*
 - [NEW] `backend/brain/explainability/lime_explainer.py`
 - [NEW] `backend/brain/explainability/nl_explanation.py`
 
 ### Phase 3 Milestone
-> ✅ Multi-agent LLM research team produces daily research/signals. FinBERT processes Indian financial news. HMM routes predictions to regime-specific models. Risk management protects capital with ATR stops, Kelly sizing, and VaR monitoring. RAG knowledge base answers financial queries.
+> ✅ Multi-agent LLM research team (2-tier) produces daily research/signals. FinBERT processes Indian financial news. HMM routes predictions to regime-specific models. Sector rotation engine tracks capital flows. Dividend intelligence flags swing timing. Regulatory calendar auto-adjusts risk. Risk management protects capital with ATR stops, Kelly sizing, and VaR monitoring. RAG knowledge base answers financial queries.
 
 ---
 
-## Phase 4 — Options Intelligence, Paper Trading & Tax Optimization (Months 7–9)
+## Phase 4 — IPO Analysis, Tax Optimization & Signal Validation
 
-> **Goal**: Add options/derivatives intelligence, paper trading simulation, tax optimization, IPO analysis, and enhanced delivery channels.
+> **Goal**: Add IPO analysis, tax optimization, lightweight paper trading signal validation, and communication channels.
 
-### Step 4.1 — Options & Derivatives Intelligence
-
-- [ ] Implement real-time Greeks computation (Delta, Gamma, Theta, Vega, Rho)
-- [ ] Build Black-Scholes + Black-76 pricing engines
-- [ ] Build Implied Volatility surface (strike × expiry grid)
-- [ ] Implement PCR, Max Pain, OI analysis, IV Rank/Percentile, Unusual Options Activity (UOA) detection
-- [ ] Build options strategy recommendation engine (regime × IV × view → strategy)
-- [ ] Add expiry day intelligence: GEX analysis, Thursday-specific models, Theta crush management
-
-**Files**:
-- [NEW] `backend/brain/options/__init__.py`
-- [NEW] `backend/brain/options/greeks_engine.py`
-- [NEW] `backend/brain/options/pricing_models.py`
-- [NEW] `backend/brain/options/volatility_surface.py`
-- [NEW] `backend/brain/options/options_signals.py`
-- [NEW] `backend/brain/options/strategy_recommender.py`
-- [NEW] `backend/brain/options/expiry_intelligence.py`
-
-### Step 4.2 — Paper Trading & Simulation Engine
-
-- [ ] Build virtual trading engine mirroring full production pipeline
-- [ ] Implement shadow order book with realistic slippage model: `0.05% + f(volume, spread)`
-- [ ] Track full metrics: Sharpe, Sortino, max drawdown, win rate, R-multiple, profit factor
-- [ ] Build A/B comparison dashboard: paper vs live vs buy-and-hold vs NIFTY 50
-- [ ] Implement promotion criteria: 3 months paper, Sharpe >1.5, max DD <15%, win rate >55%
-- [ ] Implement gradual capital allocation scaling (10% → 100%)
-
-**Files**:
-- [NEW] `backend/brain/paper_trading/__init__.py`
-- [NEW] `backend/brain/paper_trading/virtual_engine.py`
-- [NEW] `backend/brain/paper_trading/shadow_orderbook.py`
-- [NEW] `backend/brain/paper_trading/promotion_criteria.py`
-- [NEW] `backend/brain/paper_trading/performance_tracker.py`
-
-### Step 4.3 — Indian Tax Optimization
-
-- [ ] Implement FY 2025–26 capital gains tax rules (STCG 20%, LTCG 12.5%)
-- [ ] Build tax-loss harvesting engine (India has no wash-sale rule)
-- [ ] Add holding period intelligence to SELL signals (`days_to_ltcg`, `tax_saving_if_held`)
-- [ ] Implement year-end (March) portfolio-wide tax optimization
-- [ ] Add tax-adjusted returns to all signal outputs
-
-**Files**:
-- [NEW] `backend/brain/tax/__init__.py`
-- [NEW] `backend/brain/tax/capital_gains.py`
-- [NEW] `backend/brain/tax/tax_loss_harvesting.py`
-- [NEW] `backend/brain/tax/holding_period_optimizer.py`
-
-### Step 4.4 — IPO Analysis Module
+### Step 4.1 — IPO Analysis Module
 
 - [ ] Build DRHP/RHP analysis agent (financial health, peer comparison, promoter background)
 - [ ] Implement GMP tracking scraper
 - [ ] Track subscription data: QIB, NII, Retail multiples
 - [ ] Build listing day prediction model
-- [ ] Add lock-in expiry tracking (promoter 18 months, anchor 30/90 days)
+- [ ] Add lock-in expiry tracking (promoter 18 months, anchor 30/90 days) — swing opportunity on unlock
 
 **Files**:
 - [NEW] `backend/brain/ipo/__init__.py`
 - [NEW] `backend/brain/ipo/ipo_analyzer.py`
 - [NEW] `backend/brain/ipo/gmp_tracker.py`
 - [NEW] `backend/brain/ipo/listing_predictor.py`
+- [NEW] `backend/brain/ipo/lock_in_tracker.py`
 
-### Step 4.5 — Communication Channels
+### Step 4.2 — Indian Tax Optimization
 
-- [ ] Build Telegram bot (`python-telegram-bot`): signal delivery, `/portfolio`, `/signals`, `/risk`, `/market`
-- [ ] Implement WhatsApp Business API integration for morning briefs and P1 alerts
+- [ ] Implement FY 2025–26 capital gains tax rules (STCG 20% < 12 months, LTCG 12.5% ≥ 12 months > ₹1.25L)
+- [ ] Build tax-loss harvesting engine (India has no wash-sale rule — significant advantage)
+- [ ] Add holding period intelligence to SELL signals (`days_to_ltcg`, `tax_saving_if_held`)
+- [ ] Implement year-end (March) portfolio-wide tax optimization
+- [ ] Integrate post-2020 dividend taxation (dividends taxed as income)
+
+**Files**:
+- `backend/brain/tax/__init__.py` *(exists)*
+- [NEW] `backend/brain/tax/capital_gains.py`
+- [NEW] `backend/brain/tax/tax_loss_harvesting.py`
+- [NEW] `backend/brain/tax/holding_period_optimizer.py`
+
+### Step 4.3 — Paper Trading Signal Validator (Lightweight)
+
+- [ ] Log every swing signal: ticker, direction, entry price, target, stop, confidence
+- [ ] Track outcome: hit target / hit stop / timed out
+- [ ] Calculate: win rate, avg R-multiple, profit factor, Sharpe
+- [ ] Implement promotion criteria: validated over 2–3 months, Sharpe >1.5, win rate >55%, max DD <15%
+
+> **Note:** This is a lightweight signal validation tracker, not a complex shadow order book. The goal is to validate Brain signals before trusting them with real capital.
+
+**Files**:
+- `backend/brain/paper_trading/__init__.py` *(exists)*
+- [NEW] `backend/brain/paper_trading/signal_validator.py`
+- [NEW] `backend/brain/paper_trading/promotion_tracker.py`
+
+### Step 4.4 — Communication Channels
+
+- [ ] Build Telegram bot (`python-telegram-bot`): signal delivery, `/portfolio`, `/signals`, `/risk`, `/market`, `/ipo`
 - [ ] Configure Firebase Cloud Messaging with priority tiers (P1 critical → P3 digest)
 
 **Files**:
-- [NEW] `backend/brain/delivery/__init__.py`
-- [NEW] `backend/brain/delivery/telegram_bot.py`
-- [NEW] `backend/brain/delivery/whatsapp_service.py`
-- [NEW] `backend/brain/delivery/push_notifications.py`
+- `backend/brain/communication/__init__.py` *(exists)*
+- [NEW] `backend/brain/communication/telegram_bot.py`
+- [NEW] `backend/brain/communication/push_notifications.py`
 
 ### Phase 4 Milestone
-> ✅ Options intelligence provides Greeks, strategy recommendations, and expiry day analysis. Paper trading validates strategies for 3+ months before live deployment. Tax module optimizes after-tax returns. IPO analyzer identifies pre-listing opportunities.
+> ✅ IPO analyzer identifies pre-listing and lock-in expiry swing opportunities. Tax module optimizes after-tax returns. Paper trading validates swing signals for 2–3 months before live deployment. Telegram bot delivers P1 alerts and portfolio commands.
 
 ---
 
-## Phase 5 — Advanced ML & Real-Time Engine (Months 9–11)
+## Phase 5 — Advanced ML & Real-Time Streaming
 
-> **Goal**: Deploy foundation models, reinforcement learning for portfolio optimization, real-time Flink streaming, and global correlation analytics.
+> **Goal**: Deploy foundation models, reinforcement learning for portfolio optimization, Python-native real-time streaming, and global correlation analytics.
 
 ### Step 5.1 — Foundation Model Integration
 
@@ -435,9 +456,9 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [ ] Implement regime-conditional ensembling: specialist models selected by HMM state + stacked XGBoost meta-learner
 
 **Files**:
-- [NEW] `backend/brain/ml/models/kronos_model.py`
-- [NEW] `backend/brain/ml/models/timesfm_model.py`
-- [NEW] `backend/brain/ml/models/ensemble_manager.py`
+- [NEW] `backend/brain/models_ml/foundation/kronos_model.py`
+- [NEW] `backend/brain/models_ml/foundation/timesfm_model.py`
+- [NEW] `backend/brain/models_ml/ensemble/ensemble_manager.py`
 
 ### Step 5.2 — Reinforcement Learning Portfolio Optimization
 
@@ -454,12 +475,12 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [NEW] `backend/brain/portfolio/black_litterman.py`
 - [NEW] `backend/brain/portfolio/hrp_optimizer.py`
 
-### Step 5.3 — Real-Time Flink Streaming (or Python-Native Alternative)
+### Step 5.3 — Real-Time Python Streaming (Faust/Bytewax)
 
-- [ ] Evaluate Apache Flink vs Python-native streaming (Faust/Bytewax) for current scale
+- [ ] Deploy **Faust** or **Bytewax** for lightweight Python-native streaming (chosen over Flink for cost and simplicity)
 - [ ] Implement 4 parallel streaming jobs: Feature Computation, CEP Signal Detection, Anomaly Detection, Feature Freshness Monitor
 - [ ] Implement windowed aggregations: 1min, 5min, 15min, 1hr OHLCV
-- [ ] Implement chart pattern detection: double bottoms, volume breakouts, head-and-shoulders
+- [ ] Implement chart pattern detection for swing entries: double bottoms, volume breakouts, head-and-shoulders
 - [ ] Target latency: <100ms end-to-end
 
 **Files**:
@@ -473,8 +494,8 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 
 - [ ] Implement overnight global signal processing: S&P 500, NASDAQ, SGX/GIFT NIFTY, Asian markets, crude oil, DXY, US 10Y
 - [ ] Implement cross-asset correlation matrix with India-specific mappings
-- [ ] Implement DCC-GARCH for time-varying correlation
-- [ ] Build pre-market prediction engine (produces opening signal by 8:30 AM IST)
+- [ ] Use rolling exponential correlation with decay factor (cost-effective alternative to DCC-GARCH)
+- [ ] Build pre-market swing signal engine (produces opening signal by 8:30 AM IST)
 - [ ] Implement correlation breakout alerts (>2σ divergence)
 
 **Files**:
@@ -483,69 +504,87 @@ The plan is organized into **6 Phases over ~12 months**, each building on the pr
 - [NEW] `backend/brain/correlation/correlation_matrix.py`
 - [NEW] `backend/brain/correlation/premarket_engine.py`
 
-### Step 5.5 — Alternative Data Integration
+### Step 5.5 — Alternative Data Integration (High-Signal Only)
 
 - [ ] Google Trends India (`pytrends`) — brand/sector search interest as leading indicators
-- [ ] Web scraping: e-commerce pricing, Naukri.com job postings, app download rankings
-- [ ] UPI transaction data from NPCI (monthly, fintech impact)
 - [ ] Regulatory filings: SEBI SAST, bulk/block deals, insider trading disclosures
 - [ ] Assign signal decay half-lives per data source
 
 **Files**:
 - [NEW] `backend/brain/alt_data/__init__.py`
 - [NEW] `backend/brain/alt_data/google_trends.py`
-- [NEW] `backend/brain/alt_data/web_scraper.py`
 - [NEW] `backend/brain/alt_data/regulatory_filings.py`
-- [NEW] `backend/brain/alt_data/upi_data.py`
 
 ### Phase 5 Milestone
-> ✅ Foundation models provide zero-shot and fine-tuned predictions. RL agent optimizes portfolio allocation. Real-time streaming computes features and detects patterns in <100ms. Global correlations inform pre-market signals. Alternative data provides information edge.
+> ✅ Foundation models provide zero-shot and fine-tuned predictions. RL agent optimizes portfolio allocation. Real-time Python streaming computes features and detects swing patterns in <100ms. Global correlations inform pre-market signals. Alternative data (Google Trends, regulatory filings) provides information edge.
 
 ---
 
-## Phase 6 — Production Hardening & Dashboard (Months 11–12)
+## Phase 6 — Production Hardening, Security & Dashboard
 
-> **Goal**: Security, disaster recovery, monitoring, SEBI compliance, load testing, and full dashboard build.
+> **Goal**: Security, disaster recovery, system health dashboard, monitoring, SEBI compliance, watchlists, MF/ETF analysis, and full dashboard build.
 
 ### Step 6.1 — Security & Secrets Management
 
-- [ ] Deploy HashiCorp Vault or AWS Secrets Manager for all credentials
-- [ ] Implement AES-256 encryption at rest, TLS 1.3 in transit, mTLS between services
-- [ ] Configure static elastic IPs for broker API connections (SEBI requirement)
+- [ ] Deploy HashiCorp Vault or Docker Secrets for all credentials
+- [ ] Implement AES-256 encryption at rest, TLS 1.3 in transit
+- [ ] Configure static IPs for broker API connections (SEBI requirement for algo trading)
 - [ ] Implement audit logging with SHA-256 payload hashes (5-year retention)
 
-### Step 6.2 — Disaster Recovery
+### Step 6.2 — System Health Dashboard
+
+- [ ] Kafka: consumer lag, topic throughput, DLQ depth
+- [ ] Feature Store: feature freshness (staleness >2h = alert), computation time
+- [ ] Models: inference latency (P95), prediction drift score, last retrain date
+- [ ] APIs: quota usage per provider, rate limit proximity, error rates
+- [ ] Infrastructure: CPU/RAM/disk per container, network I/O
+
+**Files**:
+- `backend/brain/monitoring/__init__.py` *(exists)*
+- [NEW] `backend/brain/monitoring/health_dashboard.py`
+- [NEW] Grafana dashboard templates
+
+### Step 6.3 — Disaster Recovery
 
 - [ ] Implement broker API failover (primary → secondary within 5s)
-- [ ] Configure Kafka ISR ≥ 2 across AZs
+- [ ] Configure Kafka ISR ≥ 2 across AZs (production)
 - [ ] Build "guardian process" for emergency position exits
-- [ ] Set up chaos engineering tests (Litmus Chaos) for monthly validation
+- [ ] Database backup: daily automated PostgreSQL + Redis snapshots
 
-### Step 6.3 — Monitoring & Observability
+### Step 6.4 — Monitoring & Observability
 
 - [ ] Deploy Prometheus + Grafana for metrics
 - [ ] Set up Jaeger/OpenTelemetry for distributed tracing
 - [ ] Monitor model drift via Evidently AI (KL-divergence, PSI)
-- [ ] Build data quality monitoring dashboard in Grafana
 - [ ] Implement retraining triggers on performance degradation
 
-### Step 6.4 — Frontend Dashboard Enhancement
+### Step 6.5 — Frontend Dashboard Enhancement
 
 - [ ] Integrate **TradingView Lightweight Charts** for interactive stock charts
-- [ ] Build 7 primary panels: Market Overview, Signal Board, Stock Deep Dive, Portfolio Tracker, Sentiment Dashboard, Agent Activity Log, Report Center
+- [ ] Build 7+ primary panels: Market Overview, Signal Board, Stock Deep Dive, Portfolio Tracker, Sentiment Dashboard, Agent Activity Log, Report Center
+- [ ] Add **Watchlist & Multi-Portfolio Management**: custom watchlists (growth, dividend, sector), multiple portfolio profiles (aggressive swing, defensive, sector-focused), portfolio-level analytics
+- [ ] Add **MF/ETF Analysis (Light)**: mutual fund overlap detection with direct equity holdings, basic SIP timing signals, MF vs direct stock alpha comparison
 - [ ] Add SHAP waterfall chart visualizations per stock
 - [ ] Implement real-time WebSocket updates for signals and prices
 - [ ] Build automated PDF report generation and delivery
 
-### Step 6.5 — Load Testing & SEBI Compliance
+### Step 6.6 — REST API & WebSocket
 
-- [ ] Run load tests: 50K ticks/sec ingestion, <100ms P95 E2E, 10K concurrent WebSocket connections
-- [ ] Validate market open stress test (10x burst at 9:15 AM)
-- [ ] Implement SEBI algo registration requirements (static IP, order audit trail, <10 orders/sec classification)
-- [ ] Configure Kubernetes CronHPA for market-hours autoscaling
+- [ ] `GET /brain/picks` — top swing picks with confidence + targets
+- [ ] `GET /brain/market-regime` — current HMM state + sector rotation
+- [ ] `GET /brain/stock/{symbol}` — deep analysis with SHAP
+- [ ] `GET /brain/portfolio` — allocation + performance
+- [ ] `GET /brain/risk-dashboard` — risk metrics + VaR
+- [ ] `GET /brain/sectors` — sector rotation signals + flow data
+- [ ] `GET /brain/dividends` — upcoming ex-dates + impact analysis
+- [ ] `GET /brain/ipo` — active IPOs + analysis
+- [ ] `GET /brain/calendar` — regulatory events + risk adjustments
+- [ ] `GET /brain/watchlists` — custom watchlists
+- [ ] `GET /brain/mf-overlap` — MF/ETF overlap with portfolio
+- [ ] `WS /brain/live` — real-time swing signal + price updates
 
 ### Phase 6 Milestone
-> ✅ Production-grade system with security, DR, monitoring, compliance, and a stunning dashboard. Ready for live trading with paper-validated strategies.
+> ✅ Production-grade system with security, DR, system health monitoring, compliance, and a stunning dashboard with watchlists, multi-portfolio, and MF/ETF analysis. Ready for live trading with paper-validated strategies.
 
 ---
 
@@ -561,11 +600,11 @@ Each phase will include unit tests and integration tests. Testing approach:
 2. **Phase 2**: Test model inference latency (<20ms), signal confidence scoring calculations, backtesting cost model against manual calculations
    - Run: `cd backend && python -m pytest tests/brain/test_models.py tests/brain/test_signals.py tests/brain/test_backtesting.py -v`
 
-3. **Phase 3**: Test HMM regime transitions, sentiment scoring pipeline, agent response quality, risk calculations (VaR, position sizing), SHAP value generation
-   - Run: `cd backend && python -m pytest tests/brain/test_regime.py tests/brain/test_sentiment.py tests/brain/test_risk.py -v`
+3. **Phase 3**: Test HMM regime transitions, sentiment scoring pipeline, agent response quality, risk calculations (VaR, position sizing), SHAP value generation, sector rotation signals
+   - Run: `cd backend && python -m pytest tests/brain/test_regime.py tests/brain/test_sentiment.py tests/brain/test_risk.py tests/brain/test_sectors.py -v`
 
-4. **Phase 4**: Test Greeks calculations against Black-Scholes analytical solutions, paper trading order execution, tax calculations
-   - Run: `cd backend && python -m pytest tests/brain/test_options.py tests/brain/test_paper_trading.py tests/brain/test_tax.py -v`
+4. **Phase 4**: Test paper trading signal validation, tax calculations, IPO listing predictions
+   - Run: `cd backend && python -m pytest tests/brain/test_paper_trading.py tests/brain/test_tax.py tests/brain/test_ipo.py -v`
 
 ### Manual Verification
 
@@ -574,11 +613,11 @@ Each phase will include unit tests and integration tests. Testing approach:
 
 **Phase 1 manual check**: Start all services with `docker compose up`, verify Kafka topics exist via Kafka UI, check feature store serves features via API.
 
-**Phase 2 manual check**: Trigger model training, verify MLflow UI shows experiments, check signal API returns structured JSON with confidence scores.
+**Phase 2 manual check**: Trigger model training, verify MLflow UI shows experiments, check signal API returns structured JSON with confidence scores and swing-specific fields.
 
-**Phase 3 manual check**: Run agent research workflow for a specific stock (e.g., RELIANCE), verify it produces bull/bear arguments and final synthesis with SHAP explanations.
+**Phase 3 manual check**: Run agent research workflow for a specific stock (e.g., RELIANCE), verify it produces bull/bear arguments and final synthesis with SHAP explanations. Check sector rotation signals.
 
-**Phase 4 manual check**: View options chain for NIFTY, verify Greeks are computed, check paper trading creates virtual orders.
+**Phase 4 manual check**: Run paper trade validator, check IPO analysis for a recent IPO, verify tax calculations for STCG/LTCG.
 
 ---
 
