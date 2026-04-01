@@ -20,7 +20,7 @@ from services.db_dashboard_service import DatabaseDashboardService
 from routes.db_dashboard import router as db_dashboard_router, init_dashboard_router
 from services.pg_control_service import PgControlService
 from routes.pg_control import router as pg_control_router, init_pg_control_router
-from routes.brain import router as brain_router, init_brain_router
+from routes.brain import router as brain_legacy_router, init_brain_router
 
 # Configure logging early
 logging.basicConfig(
@@ -2860,7 +2860,7 @@ async def normalize_alt_data(symbol: str, payload: Dict[str, Any]):
 # Include sub-routers into api_router first, then mount api_router on app
 api_router.include_router(db_dashboard_router)
 api_router.include_router(pg_control_router)
-api_router.include_router(brain_router)
+api_router.include_router(brain_legacy_router)
 if BRAIN_AVAILABLE and brain_router:
     app.include_router(brain_router)
     logger.info("Brain API routes registered at /api/brain/")
@@ -3201,7 +3201,7 @@ async def startup_event():
     # Start Stock Pulse Brain engine
     if BRAIN_AVAILABLE and brain_engine:
         try:
-            await brain_engine.start()
+            await brain_engine.start(db=db)
             logger.info("Stock Pulse Brain engine started")
         except Exception as e:
             logger.warning(f"Brain engine start warning: {e}")
