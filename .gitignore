@@ -99,3 +99,7 @@ mongo_dump_*/
 mongodump_*/
 .coddo/
 .claude/
+-e 
+# Environment files
+*.env
+*.env.*
