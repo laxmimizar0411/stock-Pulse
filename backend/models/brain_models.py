@@ -13,6 +13,14 @@ class BrainFeatureSnapshot(BaseModel):
     derivatives: Dict[str, Any] = Field(default_factory=dict)
     risk: Dict[str, Any] = Field(default_factory=dict)
     ml_features: Dict[str, Any] = Field(default_factory=dict)
+    brain_pipeline_features: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Latest brain_features.features JSON (Phase 1 pipeline).",
+    )
+    brain_pipeline_meta: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="as_of_date, feature_count, computed_at for brain_pipeline row.",
+    )
     freshness: Dict[str, Any] = Field(default_factory=dict)
     quality_flags: List[str] = Field(default_factory=list)
 

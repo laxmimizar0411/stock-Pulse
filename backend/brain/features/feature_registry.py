@@ -195,7 +195,12 @@ class FeatureRegistry:
                     continue
 
                 try:
-                    result = defn.compute_fn(data)
+                    if defn.category == "cross_sectional":
+                        if price_data is None or market_data is None:
+                            continue
+                        result = defn.compute_fn(price_data, market_data, symbol)
+                    else:
+                        result = defn.compute_fn(data)
                     if isinstance(result, dict):
                         all_features.update(result)
                     else:

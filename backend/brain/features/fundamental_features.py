@@ -316,6 +316,108 @@ def compute_revenue_growth_consistency(data: Dict[str, Any]) -> Dict[str, float]
     return result
 
 
+def compute_beneish_m_score(data: Dict[str, Any]) -> Dict[str, float]:
+    """
+    Beneish M-Score (8-variable model, Beneish 1999).
+
+    M > -1.74 suggests higher earnings-manipulation risk (non-manipulators
+    typically score below this threshold). Uses period t vs t-1 ratios.
+
+    Expected keys (optional; missing components yield NaN for full score):
+        revenue, revenue_prev, receivables, receivables_prev,
+        gross_margin, gross_margin_prev (as ratios 0–1 if stored as %, pass /100),
+        total_assets, total_assets_prev, current_assets, fixed_assets,
+        current_assets_prev, fixed_assets_prev,
+        long_term_debt, long_term_debt_prev, total_liabilities, total_liabilities_prev,
+        depreciation, depreciation_prev, net_income, operating_cash_flow,
+        operating_expense, operating_expense_prev (SG&A proxy),
+    """
+    result: Dict[str, float] = {"beneish_m_score": float("nan"), "beneish_manipulation_risk": float("nan")}
+
+    def _ratio(num: float, den: float) -> float:
+        if den == 0:
+            return float("nan")
+        return num / den
+
+    try:
+        sales = _safe_get(data, "revenue")
+        sales_prev = _safe_get(data, "revenue_prev")
+        rec = _safe_get(data, "receivables")
+        rec_prev = _safe_get(data, "receivables_prev")
+        ta = _safe_get(data, "total_assets")
+        ta_prev = _safe_get(data, "total_assets_prev")
+        ca = _safe_get(data, "current_assets")
+        ppe = _safe_get(data, "fixed_assets")
+        ca_prev = _safe_get(data, "current_assets_prev")
+        ppe_prev = _safe_get(data, "fixed_assets_prev")
+        ltd = _safe_get(data, "long_term_debt")
+        ltd_prev = _safe_get(data, "long_term_debt_prev")
+        tl = _safe_get(data, "total_liabilities")
+        tl_prev = _safe_get(data, "total_liabilities_prev")
+        dep = _safe_get(data, "depreciation")
+        dep_prev = _safe_get(data, "depreciation_prev")
+        ni = _safe_get(data, "net_income")
+        cfo = _safe_get(data, "operating_cash_flow")
+        gm = _safe_get(data, "gross_margin")
+        gm_prev = _safe_get(data, "gross_margin_prev")
+        opex = data.get("operating_expense")
+        opex_prev = data.get("operating_expense_prev")
+
+        # Gross margin as ratio if given as percentage
+        if gm > 1.5:
+            gm /= 100.0
+        if gm_prev > 1.5:
+            gm_prev /= 100.0
+
+        dsri = _ratio(_ratio(rec, sales), _ratio(rec_prev, sales_prev)) if sales and sales_prev else float("nan")
+        gmi = _ratio(gm_prev, gm) if gm and gm_prev else float("nan")
+
+        aqi_cur = 1.0 - _ratio(ca + ppe, ta) if ta else float("nan")
+        aqi_prev = 1.0 - _ratio(ca_prev + ppe_prev, ta_prev) if ta_prev else float("nan")
+        aqi = _ratio(aqi_cur, aqi_prev) if not (np.isnan(aqi_cur) or np.isnan(aqi_prev)) else float("nan")
+
+        sgi = _ratio(sales, sales_prev) if sales_prev else float("nan")
+
+        dep_rate = _ratio(dep, dep + ppe) if (dep + ppe) else float("nan")
+        dep_rate_prev = _ratio(dep_prev, dep_prev + ppe_prev) if (dep_prev + ppe_prev) else float("nan")
+        depi = _ratio(dep_rate_prev, dep_rate) if dep_rate and dep_rate_prev else float("nan")
+
+        if (
+            opex is None
+            or opex_prev is None
+            or sales <= 0
+            or sales_prev <= 0
+        ):
+            sgai = float("nan")
+        else:
+            sgai = _ratio(_ratio(float(opex_prev), sales_prev), _ratio(float(opex), sales))
+
+        tata = _ratio(ni - cfo, ta) if ta else float("nan")
+
+        lvgi = _ratio(_ratio(ltd + tl, ta), _ratio(ltd_prev + tl_prev, ta_prev)) if ta and ta_prev else float("nan")
+
+        components = [dsri, gmi, aqi, sgi, depi, sgai, tata, lvgi]
+        if any(np.isnan(c) for c in components):
+            return result
+
+        m = (
+            -4.84
+            + 0.92 * dsri
+            + 0.528 * gmi
+            + 0.404 * aqi
+            + 0.892 * sgi
+            + 0.115 * depi
+            - 0.172 * sgai
+            + 4.679 * tata
+            - 0.327 * lvgi
+        )
+        result["beneish_m_score"] = round(float(m), 4)
+        result["beneish_manipulation_risk"] = 1.0 if m > -1.74 else 0.0
+    except Exception:
+        logger.exception("Error computing Beneish M-Score")
+    return result
+
+
 def compute_roce_trend(data: Dict[str, Any]) -> Dict[str, float]:
     """
     ROCE trend over 3 years.
@@ -376,6 +478,7 @@ def compute_all_fundamental_features(data: Dict[str, Any]) -> Dict[str, float]:
     computations = [
         compute_piotroski_f_score,
         compute_altman_z_score,
+        compute_beneish_m_score,
         compute_earnings_quality,
         compute_margin_trajectory,
         compute_promoter_holding_change,

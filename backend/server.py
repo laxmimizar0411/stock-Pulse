@@ -11,6 +11,7 @@ from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone
 import asyncio
+import json
 from services.mongo_utils import (
     sanitize_symbol, validate_update_fields,
     WATCHLIST_UPDATE_FIELDS, PORTFOLIO_UPDATE_FIELDS,
@@ -757,8 +758,12 @@ async def run_ml_features_job(days: int = Query(default=60, le=365)):
         raise HTTPException(status_code=503, detail="Time-series store not available")
     try:
         from jobs.ml_features_job import run_ml_features_job as _run
-        count = await _run(_ts_store, days=days)
-        return {"job": "ml_features_daily", "records_upserted": count}
+        counts = await _run(_ts_store, days=days)
+        return {
+            "job": "ml_features_daily",
+            "records_upserted": counts.get("ml_features_daily", 0),
+            "brain_features_symbols_upserted": counts.get("brain_features", 0),
+        }
     except Exception as e:
         logger.exception("ML features job failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2762,6 +2767,27 @@ async def get_brain_features(symbol: str):
         quality_flags.append("missing_technical")
     if not snapshot.get("fundamentals"):
         quality_flags.append("missing_fundamentals")
+
+    bp_features: Dict[str, Any] = {}
+    bp_meta: Dict[str, Any] = {}
+    bpr = snapshot.get("brain_pipeline_row")
+    if isinstance(bpr, dict):
+        feats = bpr.get("features")
+        if isinstance(feats, str):
+            try:
+                feats = json.loads(feats)
+            except json.JSONDecodeError:
+                feats = {}
+        if isinstance(feats, dict):
+            bp_features = feats
+        bp_meta = {
+            "as_of_date": str(bpr["as_of_date"]) if bpr.get("as_of_date") is not None else "",
+            "feature_count": bpr.get("feature_count"),
+            "computed_at": str(bpr["computed_at"]) if bpr.get("computed_at") is not None else "",
+        }
+    if not bp_features:
+        quality_flags.append("missing_brain_pipeline")
+
     response = {
         "symbol": symbol.upper(),
         "available": True,
@@ -2774,6 +2800,8 @@ async def get_brain_features(symbol: str):
             "derivatives": snapshot.get("derivatives") or {},
             "risk": snapshot.get("risk") or {},
             "ml_features": snapshot.get("ml_features") or {},
+            "brain_pipeline_features": bp_features,
+            "brain_pipeline_meta": bp_meta,
             "freshness": {"as_of_date": str(snapshot.get("as_of_date"))},
             "quality_flags": quality_flags,
         },

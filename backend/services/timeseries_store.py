@@ -1,12 +1,12 @@
 """
 PostgreSQL Time-Series Store for StockPulse
 
-Handles storage and retrieval of time-series data across 14 tables:
+Handles storage and retrieval of time-series data across 15 tables:
 - prices_daily, derived_metrics_daily, technical_indicators,
   ml_features_daily, risk_metrics, valuation_daily,
   fundamentals_quarterly, shareholding_quarterly,
   corporate_actions, macro_indicators, derivatives_daily,
-  intraday_metrics, weekly_metrics, schema_migrations
+  intraday_metrics, weekly_metrics, schema_migrations, brain_features
 
 Uses asyncpg for high-performance async PostgreSQL access.
 """
@@ -86,6 +86,7 @@ class TimeSeriesStore:
                 )
                 table_names = [t["table_name"] for t in tables]
                 logger.info(f"Available tables: {table_names}")
+                await self._ensure_brain_features_table(conn)
             
             self._is_initialized = True
         except Exception as e:
@@ -98,6 +99,27 @@ class TimeSeriesStore:
             await self._pool.close()
             self._pool = None
         self._is_initialized = False
+
+    async def _ensure_brain_features_table(self, conn) -> None:
+        """Create brain_features if missing (Phase 1 Brain pipeline persistence)."""
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS brain_features (
+                symbol VARCHAR(32) NOT NULL,
+                as_of_date DATE NOT NULL,
+                features JSONB NOT NULL DEFAULT '{}'::jsonb,
+                feature_count INT NOT NULL DEFAULT 0,
+                computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (symbol, as_of_date)
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_brain_features_computed_at
+            ON brain_features (computed_at DESC)
+            """
+        )
     
     # ========================
     # Prices Daily
@@ -786,6 +808,106 @@ class TimeSeriesStore:
             return [dict(r) for r in rows]
 
     # ========================
+    # Brain Features (Phase 1 pipeline vector, JSONB)
+    # ========================
+
+    @staticmethod
+    def _sanitize_feature_json(obj: Any) -> Any:
+        """Replace NaN/Inf with None for JSON persistence."""
+        import math
+
+        if isinstance(obj, dict):
+            return {k: TimeSeriesStore._sanitize_feature_json(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [TimeSeriesStore._sanitize_feature_json(v) for v in obj]
+        if isinstance(obj, float):
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+        return obj
+
+    async def upsert_brain_features(self, records: List[Dict[str, Any]]) -> int:
+        """
+        Persist Brain FeaturePipeline output.
+
+        Each record: symbol, as_of_date (date or str), features (dict),
+        optional feature_count (else len(features)).
+        """
+        if not records:
+            return 0
+
+        query = """
+            INSERT INTO brain_features (symbol, as_of_date, features, feature_count, computed_at)
+            VALUES ($1, $2, $3::jsonb, $4, NOW())
+            ON CONFLICT (symbol, as_of_date) DO UPDATE SET
+                features = EXCLUDED.features,
+                feature_count = EXCLUDED.feature_count,
+                computed_at = EXCLUDED.computed_at
+        """
+        count = 0
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for r in records:
+                    try:
+                        sym = _validate_symbol(str(r.get("symbol", "")))
+                        d = _parse_date(r.get("as_of_date"))
+                        if d is None:
+                            logger.warning("brain_features skip: bad as_of_date for %s", sym)
+                            continue
+                        feat = r.get("features") or {}
+                        clean = self._sanitize_feature_json(feat)
+                        fc = r.get("feature_count")
+                        if fc is None:
+                            fc = len(feat) if isinstance(feat, dict) else 0
+                        await conn.execute(
+                            query,
+                            sym,
+                            d,
+                            json.dumps(clean),
+                            int(fc),
+                        )
+                        count += 1
+                    except Exception as e:
+                        logger.warning("Error upserting brain_features for %s: %s", r.get("symbol"), e)
+        return count
+
+    async def get_latest_brain_features(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Latest Brain feature row for a symbol (JSON + metadata)."""
+        sym = _validate_symbol(symbol)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT symbol, as_of_date, features, feature_count, computed_at
+                FROM brain_features
+                WHERE symbol = $1
+                ORDER BY as_of_date DESC, computed_at DESC
+                LIMIT 1
+                """,
+                sym,
+            )
+            if not row:
+                return None
+            d = dict(row)
+            if d.get("features") is not None and not isinstance(d["features"], dict):
+                try:
+                    d["features"] = json.loads(d["features"])
+                except (TypeError, json.JSONDecodeError):
+                    d["features"] = {}
+            return d
+
+    async def list_symbols_with_recent_prices(self, lookback_days: int = 400) -> List[str]:
+        """Symbols that have at least one price row in the lookback window."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT symbol FROM prices_daily
+                WHERE date >= (CURRENT_DATE - $1::int)
+                ORDER BY symbol
+                """,
+                int(lookback_days),
+            )
+            return [r["symbol"] for r in rows]
+
+    # ========================
     # Risk Metrics
     # ========================
 
@@ -1403,6 +1525,7 @@ class TimeSeriesStore:
         "fundamentals_quarterly", "shareholding_quarterly",
         "corporate_actions", "macro_indicators", "derivatives_daily",
         "intraday_metrics", "weekly_metrics", "schema_migrations",
+        "brain_features",
     ])
 
     async def get_stats(self) -> Dict[str, Any]:
@@ -1419,6 +1542,7 @@ class TimeSeriesStore:
                 "fundamentals_quarterly", "shareholding_quarterly",
                 "corporate_actions", "macro_indicators", "derivatives_daily",
                 "intraday_metrics", "weekly_metrics", "schema_migrations",
+                "brain_features",
             ]
             # Table names are drawn from a hard-coded whitelist above (not user input),
             # so string interpolation here is safe from SQL injection.
@@ -1465,6 +1589,10 @@ class TimeSeriesStore:
                 ),
                 ld AS (
                     SELECT * FROM derivatives_daily WHERE symbol = $1 ORDER BY date DESC LIMIT 1
+                ),
+                lbf AS (
+                    SELECT * FROM brain_features WHERE symbol = $1
+                    ORDER BY as_of_date DESC, computed_at DESC LIMIT 1
                 )
                 SELECT
                     lp.date AS as_of_date,
@@ -1473,7 +1601,8 @@ class TimeSeriesStore:
                     row_to_json(lv) AS valuation,
                     row_to_json(ld) AS derivatives,
                     row_to_json(lr) AS risk,
-                    row_to_json(lmf) AS ml_features
+                    row_to_json(lmf) AS ml_features,
+                    row_to_json(lbf) AS brain_pipeline_row
                 FROM lp
                 LEFT JOIN lt ON TRUE
                 LEFT JOIN lf ON TRUE
@@ -1481,6 +1610,7 @@ class TimeSeriesStore:
                 LEFT JOIN ld ON TRUE
                 LEFT JOIN lr ON TRUE
                 LEFT JOIN lmf ON TRUE
+                LEFT JOIN lbf ON TRUE
                 """,
                 symbol.upper(),
             )

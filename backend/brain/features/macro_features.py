@@ -205,6 +205,50 @@ def compute_fii_dii_flows(data: Dict[str, Any]) -> Dict[str, float]:
     return result
 
 
+def compute_crude_sector_correlation(data: Dict[str, Any]) -> Dict[str, float]:
+    """
+    Pearson correlation between equity (sector or index) daily returns and
+    daily crude price changes over a shared window.
+
+    Precomputed by the data layer into:
+        crude_sector_return_correlation: float
+    or pass aligned series:
+        equity_daily_returns: list[float], crude_daily_returns: list[float]
+    """
+    result: Dict[str, float] = {"crude_sector_return_correlation": float("nan")}
+    try:
+        pre = data.get("crude_sector_return_correlation")
+        if pre is not None:
+            result["crude_sector_return_correlation"] = round(float(pre), 4)
+            return result
+
+        eq = data.get("equity_daily_returns")
+        cr = data.get("crude_daily_returns")
+        if (
+            not eq
+            or not cr
+            or not isinstance(eq, (list, tuple))
+            or not isinstance(cr, (list, tuple))
+        ):
+            return result
+        a = np.array([float(x) for x in eq], dtype=float)
+        b = np.array([float(x) for x in cr], dtype=float)
+        n = min(len(a), len(b))
+        if n < 10:
+            return result
+        a = a[-n:]
+        b = b[-n:]
+        if np.std(a) < 1e-12 or np.std(b) < 1e-12:
+            return result
+        corr = float(np.corrcoef(a, b)[0, 1])
+        if np.isnan(corr):
+            return result
+        result["crude_sector_return_correlation"] = round(corr, 4)
+    except Exception:
+        logger.exception("Error computing crude-sector correlation")
+    return result
+
+
 def compute_all_macro_features(data: Dict[str, Any]) -> Dict[str, float]:
     """
     Compute all macro features in a single call.
@@ -223,6 +267,7 @@ def compute_all_macro_features(data: Dict[str, Any]) -> Dict[str, float]:
         compute_crude_oil_roc,
         compute_vix_features,
         compute_fii_dii_flows,
+        compute_crude_sector_correlation,
     ]
 
     for fn in computations:

@@ -2,11 +2,9 @@
 """
 ML Features Job for StockPulse.
 
-Populates PostgreSQL ml_features_daily with volatility, returns, and basic
-context features derived from prices_daily (and optionally macro indicators).
-
-This job is designed as a fallback / baseline feature generator when upstream
-data sources do not provide ml_features directly via the pipeline service.
+Populates PostgreSQL ``ml_features_daily`` from prices_daily, then runs the
+Brain ``FeaturePipeline`` for the same symbol universe and upserts into
+``brain_features`` (Phase 1).
 
 Usage:
     python -m jobs.ml_features_job              # Last 60 calendar days
@@ -21,7 +19,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -65,7 +63,56 @@ async def _fetch_price_history(conn, days: int) -> Dict[str, List[Tuple[date, fl
     return by_symbol
 
 
-async def run_ml_features_job(ts_store, days: int = 60) -> int:
+async def run_brain_features_pipeline_batch(ts_store, symbols: List[str]) -> int:
+    """
+    Compute Brain FeaturePipeline vectors for ``symbols`` and upsert ``brain_features``.
+    """
+    if not symbols:
+        return 0
+    try:
+        from brain.features.feature_pipeline import FeaturePipeline
+        from brain.features.timeseries_fetchers import build_timeseries_fetchers
+    except ImportError as e:
+        logger.warning("Brain feature pipeline unavailable: %s", e)
+        return 0
+
+    pf, ff, mf, mkf = build_timeseries_fetchers(ts_store)
+    pipe = FeaturePipeline(
+        price_fetcher=pf,
+        fundamental_fetcher=ff,
+        macro_fetcher=mf,
+        market_fetcher=mkf,
+    )
+    await pipe.initialize()
+    results = await pipe.compute_all_symbols(symbols)
+    batch: List[Dict[str, Any]] = []
+    for sym, feats in results.items():
+        if not feats:
+            continue
+        as_of = await ts_store.get_latest_price_date(sym)
+        if as_of is None:
+            continue
+        batch.append(
+            {
+                "symbol": sym,
+                "as_of_date": as_of,
+                "features": feats,
+                "feature_count": len(feats),
+            }
+        )
+    if not batch:
+        return 0
+    n = await ts_store.upsert_brain_features(batch)
+    logger.info("Brain features: upserted %s symbol rows", n)
+    return n
+
+
+async def run_ml_features_job(
+    ts_store,
+    days: int = 60,
+    *,
+    run_brain_pipeline: bool = True,
+) -> Dict[str, int]:
     """
     Build ml_features_daily rows for the last `days` calendar days using prices_daily.
 
@@ -79,16 +126,17 @@ async def run_ml_features_job(ts_store, days: int = 60) -> int:
     Remaining fields (macro/sentiment context) are left as NULL for now; they can be
     enriched later by upstream ETL or a more advanced feature pipeline.
     """
+    empty = {"ml_features_daily": 0, "brain_features": 0}
     if not ts_store or not getattr(ts_store, "_is_initialized", False):
         logger.warning("TimeSeriesStore not available, skipping ml_features job")
-        return 0
+        return empty
 
     async with ts_store._pool.acquire() as conn:
         history = await _fetch_price_history(conn, days=days)
 
     if not history:
         logger.info("No prices_daily history available for ml_features job")
-        return 0
+        return empty
 
     cutoff = date.today() - timedelta(days=days)
     records: List[Dict[str, Any]] = []
@@ -193,13 +241,23 @@ async def run_ml_features_job(ts_store, days: int = 60) -> int:
                 }
             )
 
-    if not records:
-        logger.info("No ml_features records to upsert")
-        return 0
+    count_ml = 0
+    if records:
+        count_ml = await ts_store.upsert_ml_features(records)
+        logger.info("ML features: upserted %s records", count_ml)
+    else:
+        logger.info("No ml_features_daily rows in date window; skipping ml_features upsert")
 
-    count = await ts_store.upsert_ml_features(records)
-    logger.info("ML features: upserted %s records", count)
-    return count
+    brain_n = 0
+    if run_brain_pipeline:
+        try:
+            brain_n = await run_brain_features_pipeline_batch(
+                ts_store, sorted(history.keys())
+            )
+        except Exception:
+            logger.exception("Brain feature pipeline batch failed")
+
+    return {"ml_features_daily": count_ml, "brain_features": brain_n}
 
 
 async def main() -> None:
@@ -210,6 +268,11 @@ async def main() -> None:
         default=60,
         help="Process last N calendar days of data (default: 60)",
     )
+    parser.add_argument(
+        "--skip-brain",
+        action="store_true",
+        help="Skip Brain FeaturePipeline / brain_features upsert",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -219,8 +282,15 @@ async def main() -> None:
     ts_store = TimeSeriesStore(dsn=dsn)
     await ts_store.initialize()
     try:
-        n = await run_ml_features_job(ts_store, days=args.days)
-        print(f"ML features: {n} records upserted")
+        n = await run_ml_features_job(
+            ts_store,
+            days=args.days,
+            run_brain_pipeline=not args.skip_brain,
+        )
+        print(
+            f"ml_features_daily: {n['ml_features_daily']} records | "
+            f"brain_features: {n['brain_features']} symbols"
+        )
     finally:
         await ts_store.close()
 

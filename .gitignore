@@ -97,3 +97,5 @@ backend/backups/*
 *.dump
 mongo_dump_*/
 mongodump_*/
+.coddo/
+.claude/

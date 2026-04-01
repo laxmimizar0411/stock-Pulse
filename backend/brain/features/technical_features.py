@@ -516,6 +516,49 @@ def _compute_rsi_series(close: np.ndarray, period: int = 14) -> np.ndarray:
     return rsi
 
 
+def _frac_diff_weights(d: float, max_k: int = 200) -> np.ndarray:
+    """Fixed-width fractional differentiation weights (López de Prado)."""
+    w = [1.0]
+    for k in range(1, max_k):
+        w_next = -w[-1] * (d - k + 1) / k
+        if abs(w_next) < 1e-5:
+            break
+        w.append(w_next)
+    return np.array(w[::-1], dtype=float)
+
+
+def compute_fractional_diff_log_close(
+    df: pd.DataFrame, d: float = 0.4, width: int = 20
+) -> Dict[str, float]:
+    """
+    Fractional differentiation of log(close) to reduce memory while preserving
+    long-range dependence. Returns the latest filtered value.
+    """
+    result: Dict[str, float] = {"frac_diff_log_close": float("nan")}
+    try:
+        if len(df) < width + 5:
+            return result
+        close = df["close"].astype(float).values
+        if np.any(close <= 0):
+            return result
+        log_p = np.log(close)
+        w = _frac_diff_weights(d, max_k=width)
+        if len(w) < 3:
+            return result
+        # Convolution: value at t uses log_p[t - len(w) + 1 : t + 1]
+        series = np.full(len(log_p), np.nan)
+        for t in range(len(w) - 1, len(log_p)):
+            window = log_p[t - len(w) + 1 : t + 1]
+            series[t] = float(np.dot(w, window))
+        val = series[-1]
+        if np.isnan(val):
+            return result
+        result["frac_diff_log_close"] = round(float(val), 6)
+    except Exception:
+        logger.exception("Error computing fractional diff log close")
+    return result
+
+
 def compute_rsi_divergence(df: pd.DataFrame, lookback: int = 20) -> Dict[str, float]:
     """
     RSI divergence signal.
@@ -589,6 +632,7 @@ def compute_all_technical_features(df: pd.DataFrame) -> Dict[str, float]:
         compute_roc,
         compute_mfi,
         compute_delivery_pct,
+        compute_fractional_diff_log_close,
         compute_rsi_divergence,
     ]
 

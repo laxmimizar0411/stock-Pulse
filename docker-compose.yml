@@ -11,29 +11,6 @@ version: "3.9"
 # =============================================================================
 
 services:
-  kafka:
-    image: bitnami/kafka:3.7
-    container_name: stockpulse-kafka
-    restart: unless-stopped
-    ports:
-      - "${KAFKA_PORT:-9092}:9092"
-    environment:
-      KAFKA_CFG_NODE_ID: 1
-      KAFKA_CFG_PROCESS_ROLES: controller,broker
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
-    healthcheck:
-      test: ["CMD", "bash", "-c", "unset JMX_PORT; /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
-      interval: 20s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-    networks:
-      - stockpulse
 
   # ---------------------------------------------------------------------------
   # Redis — Hot cache, alert queue, WebSocket pub/sub
@@ -225,6 +202,31 @@ services:
     networks:
       - stockpulse
 
+  # ---------------------------------------------------------------------------
+  # MinIO — S3-compatible object storage for data lake (Parquet archival)
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: stockpulse-minio
+    restart: unless-stopped
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-stockpulse}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-stockpulse123}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - stockpulse
+
 volumes:
   redis-data:
     driver: local
@@ -233,6 +235,8 @@ volumes:
   pg-data:
     driver: local
   kafka-data:
+    driver: local
+  minio-data:
     driver: local
 
 networks:

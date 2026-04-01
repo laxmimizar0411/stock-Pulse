@@ -28,7 +28,7 @@ import pandas as pd
 from brain.config import BrainConfig, get_brain_config
 from brain.models.events import EventType, FeatureEvent
 
-from .cross_sectional_features import compute_all_cross_sectional_features
+from .cross_sectional_features import compute_all_cross_sectional_features as _compute_all_cross_sectional
 from .feature_registry import FeatureRegistry
 from .fundamental_features import compute_all_fundamental_features
 from .macro_features import compute_all_macro_features
@@ -127,6 +127,7 @@ class FeaturePipeline:
                 "roc_10", "roc_20",
                 "mfi_14",
                 "delivery_pct", "delivery_pct_20d_avg",
+                "frac_diff_log_close",
                 "rsi_divergence",
             ],
             lookback_days=60,
@@ -155,6 +156,7 @@ class FeaturePipeline:
                 "fii_holding_current", "dii_holding_current",
                 "revenue_growth_consistency", "revenue_growth_mean",
                 "roce_latest", "roce_3yr_avg", "roce_trend",
+                "beneish_m_score", "beneish_manipulation_risk",
             ],
             lookback_days=0,
             source="fundamental",
@@ -175,6 +177,7 @@ class FeaturePipeline:
                 "fii_net_flow_7d", "fii_net_flow_30d",
                 "dii_net_flow_7d", "dii_net_flow_30d",
                 "fii_dii_flow_ratio",
+                "crude_sector_return_correlation",
             ],
             lookback_days=0,
             source="macro",
@@ -188,7 +191,7 @@ class FeaturePipeline:
         self._registry.register_feature_group(
             group_name="cross_sectional",
             category="cross_sectional",
-            compute_fn=lambda _: {},  # Placeholder; computed directly in pipeline
+            compute_fn=_compute_all_cross_sectional,
             feature_names=[
                 "relative_strength_vs_nifty",
                 "rolling_beta_60d",
@@ -263,7 +266,7 @@ class FeaturePipeline:
         # 4. Cross-sectional features (need both price + market data)
         if price_data is not None and len(price_data) > 0 and market_data:
             try:
-                cs_features = compute_all_cross_sectional_features(
+                cs_features = _compute_all_cross_sectional(
                     price_data, market_data, symbol
                 )
                 all_features.update(cs_features)
