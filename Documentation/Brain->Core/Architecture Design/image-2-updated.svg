@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 950" font-family="'Segoe UI', -apple-system, system-ui, sans-serif">
+  <defs>
+    <linearGradient id="kafka" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a365d"/>
+      <stop offset="100%" style="stop-color:#2b6cb0"/>
+    </linearGradient>
+    <linearGradient id="preprocess" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7b341e"/>
+      <stop offset="100%" style="stop-color:#c05621"/>
+    </linearGradient>
+    <linearGradient id="db" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#065666"/>
+      <stop offset="100%" style="stop-color:#0891b2"/>
+    </linearGradient>
+    <linearGradient id="feast" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#322659"/>
+      <stop offset="100%" style="stop-color:#6b46c1"/>
+    </linearGradient>
+    <linearGradient id="airflow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6b3a00"/>
+      <stop offset="100%" style="stop-color:#b8860b"/>
+    </linearGradient>
+    <linearGradient id="out" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3a29"/>
+      <stop offset="100%" style="stop-color:#276749"/>
+    </linearGradient>
+    <linearGradient id="tag" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2d3748"/>
+      <stop offset="100%" style="stop-color:#4a5568"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="2" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#718096"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="480" y="32" text-anchor="middle" fill="#b8860b" font-size="18" font-weight="600">Phase 1: Data Foundation Internal Wiring</text>
+  <text x="480" y="55" text-anchor="middle" fill="#a0aec0" font-size="12">IN: 6 source categories → INSIDE: Kafka → preprocess → store → Feast → OUT: features</text>
+
+  <!-- Schema tags -->
+  <g filter="url(#shadow)">
+    <rect x="80" y="80" width="100" height="30" rx="6" fill="url(#tag)"/>
+    <text x="130" y="100" text-anchor="middle" fill="#e2e8f0" font-size="11">Pydantic</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="780" y="80" width="100" height="30" rx="6" fill="url(#tag)"/>
+    <text x="830" y="100" text-anchor="middle" fill="#e2e8f0" font-size="11">DLQ</text>
+  </g>
+
+  <!-- Kafka -->
+  <g filter="url(#shadow)">
+    <rect x="200" y="75" width="560" height="60" rx="10" fill="url(#kafka)"/>
+    <text x="480" y="100" text-anchor="middle" fill="#fff" font-size="16" font-weight="700">Apache Kafka (KRaft, no ZooKeeper)</text>
+    <text x="480" y="120" text-anchor="middle" fill="#bee3f8" font-size="11">raw-ticks | normalized-ohlcv | signals | orders | alerts | features</text>
+  </g>
+
+  <!-- Arrows from Kafka -->
+  <line x1="480" y1="138" x2="480" y2="165" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Preprocessing -->
+  <g filter="url(#shadow)">
+    <rect x="200" y="168" width="560" height="60" rx="10" fill="url(#preprocess)"/>
+    <text x="480" y="194" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">Preprocessing Pipeline</text>
+    <text x="480" y="214" text-anchor="middle" fill="#fbd38d" font-size="11">OHLC integrity | volume check | circuit limits | splits/bonus | IST</text>
+  </g>
+
+  <!-- Arrows to DBs -->
+  <line x1="200" y1="230" x2="150" y2="280" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="360" y1="230" x2="370" y2="280" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="600" y1="230" x2="590" y2="280" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="760" y1="230" x2="810" y2="280" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- 4 DBs -->
+  <g filter="url(#shadow)">
+    <rect x="55" y="283" width="190" height="55" rx="10" fill="url(#db)"/>
+    <text x="150" y="308" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">TimescaleDB</text>
+    <text x="150" y="326" text-anchor="middle" fill="#a7f3d0" font-size="11">OHLCV series</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="270" y="283" width="190" height="55" rx="10" fill="url(#db)"/>
+    <text x="365" y="308" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">PostgreSQL</text>
+    <text x="365" y="326" text-anchor="middle" fill="#a7f3d0" font-size="11">Trades, metadata</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="485" y="283" width="190" height="55" rx="10" fill="url(#db)"/>
+    <text x="580" y="308" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">Redis</text>
+    <text x="580" y="326" text-anchor="middle" fill="#a7f3d0" font-size="11">1-5s TTL cache</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="700" y="283" width="190" height="55" rx="10" fill="url(#db)"/>
+    <text x="795" y="308" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">MinIO</text>
+    <text x="795" y="326" text-anchor="middle" fill="#a7f3d0" font-size="11">Parquet archive</text>
+  </g>
+
+  <!-- Arrows from DBs to Feast -->
+  <line x1="150" y1="340" x2="350" y2="420" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="365" y1="340" x2="400" y2="420" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="580" y1="340" x2="500" y2="420" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Feast Feature Store -->
+  <g filter="url(#shadow)">
+    <rect x="170" y="400" width="470" height="100" rx="10" fill="url(#feast)"/>
+    <text x="405" y="428" text-anchor="middle" fill="#fff" font-size="16" font-weight="700">Feast Feature Store</text>
+    <text x="405" y="450" text-anchor="middle" fill="#d6bcfa" font-size="12">Online: Redis | Offline: PostgreSQL</text>
+    <text x="405" y="470" text-anchor="middle" fill="#e9d8fd" font-size="11">Swing: RSI(14), MACD, BB(20,2), ATR(14), VWAP</text>
+    <text x="405" y="488" text-anchor="middle" fill="#e9d8fd" font-size="11">India: delivery%, FII/DII, promoter%, sector flows</text>
+  </g>
+
+  <!-- Airflow DAGs -->
+  <g filter="url(#shadow)">
+    <rect x="680" y="410" width="220" height="80" rx="10" fill="url(#airflow)"/>
+    <text x="790" y="438" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">Airflow DAGs</text>
+    <text x="790" y="458" text-anchor="middle" fill="#fbd38d" font-size="11">bhavcopy | fii_dii</text>
+    <text x="790" y="475" text-anchor="middle" fill="#fbd38d" font-size="11">fund | corp | macro</text>
+  </g>
+
+  <!-- Arrow to OUT -->
+  <line x1="405" y1="502" x2="405" y2="545" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- OUT -->
+  <g filter="url(#shadow)">
+    <rect x="170" y="548" width="620" height="55" rx="10" fill="url(#out)"/>
+    <text x="480" y="573" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">OUT: Point-in-time features</text>
+    <text x="480" y="593" text-anchor="middle" fill="#9ae6b4" font-size="11">No data leakage | versioned | → Phase 2 swing models</text>
+  </g>
+
+  <!-- Key files -->
+  <text x="480" y="640" text-anchor="middle" fill="#a0aec0" font-size="11">Key files: kafka_manager.py | normalizer.py | data_quality.py | kafka_bridge.py</text>
+  <text x="480" y="658" text-anchor="middle" fill="#a0aec0" font-size="11">feature_store.py | technical_features.py | fundamental_features.py | macro_features.py</text>
+  <text x="480" y="676" text-anchor="middle" fill="#a0aec0" font-size="11">cross_sectional_features.py | feature_pipeline.py | minio_client.py | parquet_writer.py</text>
+</svg>

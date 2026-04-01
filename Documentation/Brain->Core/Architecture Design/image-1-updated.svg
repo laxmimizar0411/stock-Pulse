@@ -1,0 +1,334 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 1350" font-family="'Segoe UI', -apple-system, system-ui, sans-serif">
+  <defs>
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2d3748"/>
+      <stop offset="100%" style="stop-color:#4a5568"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a365d"/>
+      <stop offset="100%" style="stop-color:#2b6cb0"/>
+    </linearGradient>
+    <linearGradient id="g3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#322659"/>
+      <stop offset="100%" style="stop-color:#553c9a"/>
+    </linearGradient>
+    <linearGradient id="g4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#5b2c0e"/>
+      <stop offset="100%" style="stop-color:#8b4513"/>
+    </linearGradient>
+    <linearGradient id="g5" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a4731"/>
+      <stop offset="100%" style="stop-color:#276749"/>
+    </linearGradient>
+    <linearGradient id="g6" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#065666"/>
+      <stop offset="100%" style="stop-color:#0891b2"/>
+    </linearGradient>
+    <linearGradient id="g7" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3a29"/>
+      <stop offset="100%" style="stop-color:#2f6b3f"/>
+    </linearGradient>
+    <linearGradient id="gfb" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6b3a00"/>
+      <stop offset="100%" style="stop-color:#b8860b"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="2" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Title -->
+  <text x="480" y="35" text-anchor="middle" fill="#e2e8f0" font-size="22" font-weight="700">Stock Pulse Brain — 6-Phase Master Pipeline</text>
+  <text x="480" y="58" text-anchor="middle" fill="#a0aec0" font-size="14">Swing-Trading First (~80% Swing | ~10% Intraday | ~10% Positional)</text>
+
+  <!-- Data Sources -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="78" width="110" height="36" rx="18" fill="url(#g1)"/>
+    <text x="115" y="101" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="600">NSE/BSE</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="190" y="78" width="110" height="36" rx="18" fill="url(#g1)"/>
+    <text x="245" y="101" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="600">Brokers</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="320" y="78" width="100" height="36" rx="18" fill="url(#g1)"/>
+    <text x="370" y="101" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="600">News</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="440" y="78" width="100" height="36" rx="18" fill="url(#g1)"/>
+    <text x="490" y="101" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="600">Social</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="560" y="78" width="110" height="36" rx="18" fill="url(#g1)"/>
+    <text x="615" y="101" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="600">SEBI/RBI</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="690" y="78" width="120" height="36" rx="18" fill="url(#g1)"/>
+    <text x="750" y="101" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="600">Bhavcopy</text>
+  </g>
+
+  <!-- Arrow -->
+  <line x1="480" y1="118" x2="480" y2="140" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <defs><marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#718096"/></marker></defs>
+
+  <!-- Phase 1 -->
+  <g filter="url(#shadow)">
+    <rect x="80" y="145" width="800" height="130" rx="12" fill="url(#g2)"/>
+    <text x="480" y="170" text-anchor="middle" fill="#bee3f8" font-size="16" font-weight="700">Phase 1: Data Foundation</text>
+    <g>
+      <rect x="100" y="182" width="150" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="175" y="201" text-anchor="middle" fill="#e2e8f0" font-size="11">Kafka (KRaft)</text>
+    </g>
+    <g>
+      <rect x="265" y="182" width="150" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="340" y="201" text-anchor="middle" fill="#e2e8f0" font-size="11">Preprocessing</text>
+    </g>
+    <g>
+      <rect x="430" y="182" width="150" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="505" y="201" text-anchor="middle" fill="#e2e8f0" font-size="11">4 DB stores</text>
+    </g>
+    <g>
+      <rect x="595" y="182" width="150" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="670" y="201" text-anchor="middle" fill="#e2e8f0" font-size="11">Feast features</text>
+    </g>
+    <g>
+      <rect x="100" y="222" width="230" height="30" rx="6" fill="rgba(255,255,255,0.08)"/>
+      <text x="215" y="241" text-anchor="middle" fill="#cbd5e0" font-size="11">Airflow post-market DAGs</text>
+    </g>
+    <g>
+      <rect x="350" y="222" width="395" height="30" rx="6" fill="rgba(255,255,255,0.08)"/>
+      <text x="548" y="241" text-anchor="middle" fill="#cbd5e0" font-size="11">TimescaleDB | PostgreSQL | Redis | MinIO</text>
+    </g>
+  </g>
+
+  <!-- Arrow + label -->
+  <line x1="480" y1="278" x2="480" y2="302" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="620" y="293" text-anchor="start" fill="#a0aec0" font-size="11" font-style="italic">Point-in-time features</text>
+
+  <!-- Phase 2 -->
+  <g filter="url(#shadow)">
+    <rect x="80" y="305" width="800" height="135" rx="12" fill="url(#g3)"/>
+    <text x="480" y="330" text-anchor="middle" fill="#d6bcfa" font-size="16" font-weight="700">Phase 2: AI/ML + Swing Signal Generation</text>
+    <g>
+      <rect x="100" y="342" width="110" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="155" y="362" text-anchor="middle" fill="#e2e8f0" font-size="11">GARCH</text>
+    </g>
+    <g>
+      <rect x="220" y="342" width="120" height="30" rx="6" fill="rgba(255,255,255,0.15)"/>
+      <text x="280" y="362" text-anchor="middle" fill="#fefcbf" font-size="11" font-weight="700">XGBoost ★</text>
+    </g>
+    <g>
+      <rect x="350" y="342" width="120" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="410" y="362" text-anchor="middle" fill="#e2e8f0" font-size="11">LSTM-Attn</text>
+    </g>
+    <g>
+      <rect x="480" y="342" width="120" height="30" rx="6" fill="rgba(255,255,255,0.15)"/>
+      <text x="540" y="362" text-anchor="middle" fill="#fefcbf" font-size="11" font-weight="700">TFT ★</text>
+    </g>
+    <g>
+      <rect x="610" y="342" width="120" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="670" y="362" text-anchor="middle" fill="#e2e8f0" font-size="11">N-BEATS</text>
+    </g>
+    <g>
+      <rect x="740" y="342" width="120" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="800" y="362" text-anchor="middle" fill="#e2e8f0" font-size="11">MLflow+Optuna</text>
+    </g>
+    <g>
+      <rect x="100" y="382" width="220" height="30" rx="6" fill="rgba(255,255,255,0.08)"/>
+      <text x="210" y="401" text-anchor="middle" fill="#cbd5e0" font-size="11">Signal fusion + meta-label</text>
+    </g>
+    <g>
+      <rect x="335" y="382" width="180" height="30" rx="6" fill="rgba(255,255,255,0.08)"/>
+      <text x="425" y="401" text-anchor="middle" fill="#cbd5e0" font-size="11">ONNX (5-20ms)</text>
+    </g>
+    <g>
+      <rect x="530" y="382" width="220" height="30" rx="6" fill="rgba(255,255,255,0.08)"/>
+      <text x="640" y="401" text-anchor="middle" fill="#cbd5e0" font-size="11">VectorBT Pro backtesting</text>
+    </g>
+    <text x="480" y="430" text-anchor="middle" fill="#d6bcfa" font-size="10">OUT: {ticker, direction, confidence, target, stop_loss, hold_days, swing_phase}</text>
+  </g>
+
+  <!-- Arrow + label -->
+  <line x1="480" y1="443" x2="480" y2="465" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="620" y="456" text-anchor="start" fill="#a0aec0" font-size="11" font-style="italic">Signals + confidence</text>
+
+  <!-- Phase 3 -->
+  <g filter="url(#shadow)">
+    <rect x="80" y="468" width="800" height="150" rx="12" fill="url(#g4)"/>
+    <text x="480" y="493" text-anchor="middle" fill="#fbd38d" font-size="16" font-weight="700">Phase 3: Intelligence + LLM + Risk</text>
+    <g>
+      <rect x="100" y="505" width="130" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="165" y="524" text-anchor="middle" fill="#e2e8f0" font-size="11">HMM regime</text>
+    </g>
+    <g>
+      <rect x="240" y="505" width="130" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="305" y="524" text-anchor="middle" fill="#e2e8f0" font-size="11">FinBERT NLP</text>
+    </g>
+    <g>
+      <rect x="380" y="505" width="140" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="450" y="524" text-anchor="middle" fill="#e2e8f0" font-size="11">LLM agents (2-tier)</text>
+    </g>
+    <g>
+      <rect x="530" y="505" width="130" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="595" y="524" text-anchor="middle" fill="#e2e8f0" font-size="11">Governance</text>
+    </g>
+    <g>
+      <rect x="670" y="505" width="130" height="30" rx="6" fill="rgba(255,255,255,0.15)"/>
+      <text x="735" y="524" text-anchor="middle" fill="#fefcbf" font-size="11" font-weight="600">RAG (Qdrant)</text>
+    </g>
+    <g>
+      <rect x="100" y="545" width="160" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="180" y="564" text-anchor="middle" fill="#fefcbf" font-size="11" font-weight="600">Sector Rotation</text>
+    </g>
+    <g>
+      <rect x="270" y="545" width="150" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="345" y="564" text-anchor="middle" fill="#fefcbf" font-size="11" font-weight="600">Dividend Intel</text>
+    </g>
+    <g>
+      <rect x="430" y="545" width="150" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="505" y="564" text-anchor="middle" fill="#fefcbf" font-size="11" font-weight="600">Reg. Calendar</text>
+    </g>
+    <g>
+      <rect x="590" y="545" width="180" height="30" rx="6" fill="rgba(255,255,255,0.08)"/>
+      <text x="680" y="564" text-anchor="middle" fill="#cbd5e0" font-size="11">Kelly + ATR + HRP</text>
+    </g>
+    <g>
+      <rect x="100" y="585" width="220" height="24" rx="6" fill="rgba(255,255,255,0.06)"/>
+      <text x="210" y="601" text-anchor="middle" fill="#cbd5e0" font-size="10">VaR/CVaR + Stress Tests</text>
+    </g>
+    <g>
+      <rect x="330" y="585" width="190" height="24" rx="6" fill="rgba(255,255,255,0.06)"/>
+      <text x="425" y="601" text-anchor="middle" fill="#cbd5e0" font-size="10">Regime throttling</text>
+    </g>
+    <g>
+      <rect x="530" y="585" width="220" height="24" rx="6" fill="rgba(255,255,255,0.06)"/>
+      <text x="640" y="601" text-anchor="middle" fill="#cbd5e0" font-size="10">SHAP/LIME → NL explain</text>
+    </g>
+  </g>
+
+  <!-- Arrow + label -->
+  <line x1="480" y1="621" x2="480" y2="645" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="620" y="636" text-anchor="start" fill="#a0aec0" font-size="11" font-style="italic">Risk-bounded decisions</text>
+
+  <!-- Phase 4 (NEW) -->
+  <g filter="url(#shadow)">
+    <rect x="80" y="648" width="800" height="100" rx="12" fill="url(#g6)"/>
+    <text x="480" y="673" text-anchor="middle" fill="#a7f3d0" font-size="16" font-weight="700">Phase 4: IPO, Tax &amp; Validation</text>
+    <g>
+      <rect x="100" y="685" width="160" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="180" y="704" text-anchor="middle" fill="#e2e8f0" font-size="11">IPO Analysis</text>
+    </g>
+    <g>
+      <rect x="275" y="685" width="180" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="365" y="704" text-anchor="middle" fill="#e2e8f0" font-size="11">Tax (STCG/LTCG)</text>
+    </g>
+    <g>
+      <rect x="470" y="685" width="180" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="560" y="704" text-anchor="middle" fill="#e2e8f0" font-size="11">Paper Trade Validator</text>
+    </g>
+    <g>
+      <rect x="665" y="685" width="180" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="755" y="704" text-anchor="middle" fill="#e2e8f0" font-size="11">Telegram + Push</text>
+    </g>
+    <text x="480" y="738" text-anchor="middle" fill="#a7f3d0" font-size="10">OUT: Tax-optimized decisions + IPO opportunities + validated track record</text>
+  </g>
+
+  <!-- Arrow -->
+  <line x1="480" y1="751" x2="480" y2="775" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Phase 5 -->
+  <g filter="url(#shadow)">
+    <rect x="80" y="778" width="800" height="100" rx="12" fill="url(#g5)"/>
+    <text x="480" y="803" text-anchor="middle" fill="#9ae6b4" font-size="16" font-weight="700">Phase 5: Advanced ML &amp; Real-Time Streaming</text>
+    <g>
+      <rect x="100" y="815" width="140" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="170" y="834" text-anchor="middle" fill="#e2e8f0" font-size="11">Kronos+TsFM</text>
+    </g>
+    <g>
+      <rect x="250" y="815" width="130" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="315" y="834" text-anchor="middle" fill="#e2e8f0" font-size="11">FinRL PPO</text>
+    </g>
+    <g>
+      <rect x="390" y="815" width="130" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="455" y="834" text-anchor="middle" fill="#e2e8f0" font-size="11">Global corr.</text>
+    </g>
+    <g>
+      <rect x="530" y="815" width="130" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="595" y="834" text-anchor="middle" fill="#e2e8f0" font-size="11">Pre-market</text>
+    </g>
+    <g>
+      <rect x="670" y="815" width="160" height="30" rx="6" fill="rgba(255,255,255,0.15)"/>
+      <text x="750" y="834" text-anchor="middle" fill="#fefcbf" font-size="11" font-weight="600">Faust Streaming</text>
+    </g>
+    <text x="480" y="868" text-anchor="middle" fill="#9ae6b4" font-size="10">OUT: Enhanced swing predictions + real-time patterns + pre-market signals</text>
+  </g>
+
+  <!-- Arrow -->
+  <line x1="480" y1="881" x2="480" y2="905" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Phase 6 -->
+  <g filter="url(#shadow)">
+    <rect x="80" y="908" width="800" height="125" rx="12" fill="url(#g7)"/>
+    <text x="480" y="933" text-anchor="middle" fill="#c6f6d5" font-size="16" font-weight="700">Phase 6: Production, Security &amp; Dashboard</text>
+    <g>
+      <rect x="100" y="945" width="120" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="160" y="964" text-anchor="middle" fill="#e2e8f0" font-size="11">Security</text>
+    </g>
+    <g>
+      <rect x="230" y="945" width="150" height="30" rx="6" fill="rgba(255,255,255,0.15)"/>
+      <text x="305" y="964" text-anchor="middle" fill="#fefcbf" font-size="11" font-weight="600">System Health</text>
+    </g>
+    <g>
+      <rect x="390" y="945" width="130" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="455" y="964" text-anchor="middle" fill="#e2e8f0" font-size="11">7+ panel dash</text>
+    </g>
+    <g>
+      <rect x="530" y="945" width="130" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="595" y="964" text-anchor="middle" fill="#e2e8f0" font-size="11">REST API + WS</text>
+    </g>
+    <g>
+      <rect x="670" y="945" width="130" height="30" rx="6" fill="rgba(255,255,255,0.12)"/>
+      <text x="735" y="964" text-anchor="middle" fill="#e2e8f0" font-size="11">LLM reports</text>
+    </g>
+    <g>
+      <rect x="100" y="985" width="160" height="26" rx="6" fill="rgba(255,255,255,0.08)"/>
+      <text x="180" y="1002" text-anchor="middle" fill="#fefcbf" font-size="10" font-weight="600">Watchlists</text>
+    </g>
+    <g>
+      <rect x="270" y="985" width="160" height="26" rx="6" fill="rgba(255,255,255,0.08)"/>
+      <text x="350" y="1002" text-anchor="middle" fill="#fefcbf" font-size="10" font-weight="600">Multi-Portfolio</text>
+    </g>
+    <g>
+      <rect x="440" y="985" width="160" height="26" rx="6" fill="rgba(255,255,255,0.08)"/>
+      <text x="520" y="1002" text-anchor="middle" fill="#fefcbf" font-size="10" font-weight="600">MF/ETF Overlap</text>
+    </g>
+    <g>
+      <rect x="610" y="985" width="220" height="26" rx="6" fill="rgba(255,255,255,0.08)"/>
+      <text x="720" y="1002" text-anchor="middle" fill="#cbd5e0" font-size="10">Grafana + Prometheus + DR</text>
+    </g>
+    <text x="480" y="1026" text-anchor="middle" fill="#c6f6d5" font-size="10">OUT: /brain/picks · /brain/stock/{sym} · /brain/portfolio · /brain/sectors · /brain/ipo</text>
+  </g>
+
+  <!-- Arrow -->
+  <line x1="480" y1="1036" x2="480" y2="1060" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Feedback Loop -->
+  <g filter="url(#shadow)">
+    <rect x="200" y="1063" width="560" height="55" rx="12" fill="url(#gfb)"/>
+    <text x="480" y="1087" text-anchor="middle" fill="#fefcbf" font-size="15" font-weight="700">Trade outcomes → feedback loop</text>
+    <text x="480" y="1107" text-anchor="middle" fill="#fbd38d" font-size="11" font-style="italic">Concept drift → Optuna recal → triple-barrier → retrain Phase 2-3</text>
+  </g>
+
+  <!-- Feedback arrow (left side) -->
+  <path d="M 60 1090 L 60 305" stroke="#b8860b" stroke-width="2" stroke-dasharray="6,4" fill="none"/>
+  <polygon points="58,308 62,308 60,298" fill="#b8860b"/>
+  <text x="40" y="700" text-anchor="middle" fill="#b8860b" font-size="11" font-weight="600" transform="rotate(-90, 40, 700)">Feedback: retrain models (walk-forward)</text>
+  <line x1="200" y1="1090" x2="60" y2="1090" stroke="#b8860b" stroke-width="2" stroke-dasharray="6,4"/>
+
+  <!-- Legend -->
+  <rect x="80" y="1140" width="800" height="55" rx="8" fill="rgba(45,55,72,0.5)" stroke="#4a5568" stroke-width="1"/>
+  <text x="100" y="1162" fill="#a0aec0" font-size="11">★ = Primary swing models</text>
+  <rect x="320" y="1150" width="14" height="14" rx="3" fill="rgba(255,255,255,0.15)"/>
+  <text x="340" y="1162" fill="#fefcbf" font-size="11" font-weight="600">= New features (vs previous version)</text>
+  <text x="100" y="1182" fill="#a0aec0" font-size="11">Removed: Options/Derivatives, Local LLM (Tier 3), PSO Ensemble, DCC-GARCH, Tail-Risk Hedging</text>
+</svg>

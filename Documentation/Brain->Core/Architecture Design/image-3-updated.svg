@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 950" font-family="'Segoe UI', -apple-system, system-ui, sans-serif">
+  <defs>
+    <linearGradient id="infra" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2d3748"/>
+      <stop offset="100%" style="stop-color:#4a5568"/>
+    </linearGradient>
+    <linearGradient id="models" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#322659"/>
+      <stop offset="100%" style="stop-color:#553c9a"/>
+    </linearGradient>
+    <linearGradient id="fusion" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7b341e"/>
+      <stop offset="100%" style="stop-color:#c05621"/>
+    </linearGradient>
+    <linearGradient id="conf" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#702459"/>
+      <stop offset="100%" style="stop-color:#97266d"/>
+    </linearGradient>
+    <linearGradient id="bt" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6b3a00"/>
+      <stop offset="100%" style="stop-color:#b8860b"/>
+    </linearGradient>
+    <linearGradient id="out" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3a29"/>
+      <stop offset="100%" style="stop-color:#276749"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="2" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#718096"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="480" y="32" text-anchor="middle" fill="#b8860b" font-size="18" font-weight="600">Phase 2: AI/ML Model Tiers + Swing Signal Generation</text>
+  <text x="480" y="55" text-anchor="middle" fill="#a0aec0" font-size="12">IN: Feast features → INSIDE: train → predict → fuse → OUT: swing signal JSON</text>
+
+  <!-- ML Infrastructure -->
+  <g filter="url(#shadow)">
+    <rect x="200" y="78" width="560" height="50" rx="10" fill="url(#infra)"/>
+    <text x="480" y="100" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">ML Infrastructure</text>
+    <text x="480" y="117" text-anchor="middle" fill="#cbd5e0" font-size="11">MLflow tracking | Optuna tuning | Walk-forward | CPCV | Feature selection</text>
+  </g>
+
+  <!-- Arrow -->
+  <line x1="480" y1="130" x2="480" y2="158" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Model Tiers -->
+  <g filter="url(#shadow)">
+    <rect x="80" y="160" width="800" height="130" rx="12" fill="url(#models)"/>
+    <text x="480" y="185" text-anchor="middle" fill="#d6bcfa" font-size="14" font-weight="700">5 Model Tiers (all exported to ONNX, 5-20ms inference)</text>
+    <text x="480" y="200" text-anchor="middle" fill="#fefcbf" font-size="10" font-weight="600">★ = Primary swing trading models (~80% weight)</text>
+
+    <g>
+      <rect x="100" y="212" width="140" height="50" rx="8" fill="rgba(255,255,255,0.12)"/>
+      <text x="170" y="234" text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="600">T1: GARCH</text>
+      <text x="170" y="252" text-anchor="middle" fill="#cbd5e0" font-size="10">Swing entry timing</text>
+    </g>
+    <g>
+      <rect x="255" y="212" width="155" height="50" rx="8" fill="rgba(255,255,255,0.18)" stroke="#fefcbf" stroke-width="1.5"/>
+      <text x="332" y="234" text-anchor="middle" fill="#fefcbf" font-size="13" font-weight="700">T2: XGBoost ★</text>
+      <text x="332" y="252" text-anchor="middle" fill="#fefcbf" font-size="10">Direction 2-30d</text>
+    </g>
+    <g>
+      <rect x="425" y="212" width="140" height="50" rx="8" fill="rgba(255,255,255,0.08)"/>
+      <text x="495" y="234" text-anchor="middle" fill="#a0aec0" font-size="13" font-weight="600">T3: LSTM</text>
+      <text x="495" y="252" text-anchor="middle" fill="#a0aec0" font-size="10">Intraday (10%)</text>
+    </g>
+    <g>
+      <rect x="580" y="212" width="155" height="50" rx="8" fill="rgba(255,255,255,0.18)" stroke="#fefcbf" stroke-width="1.5"/>
+      <text x="658" y="234" text-anchor="middle" fill="#fefcbf" font-size="13" font-weight="700">Primary: TFT ★</text>
+      <text x="658" y="252" text-anchor="middle" fill="#fefcbf" font-size="10">5d/10d/20d quantiles</text>
+    </g>
+    <g>
+      <rect x="750" y="212" width="115" height="50" rx="8" fill="rgba(255,255,255,0.08)"/>
+      <text x="808" y="234" text-anchor="middle" fill="#a0aec0" font-size="13" font-weight="600">Long: N-BEATS</text>
+      <text x="808" y="252" text-anchor="middle" fill="#a0aec0" font-size="10">Positional (10%)</text>
+    </g>
+  </g>
+
+  <!-- Arrows from models -->
+  <line x1="170" y1="292" x2="400" y2="340" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="332" y1="292" x2="440" y2="340" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="495" y1="292" x2="480" y2="340" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="658" y1="292" x2="520" y2="340" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="808" y1="292" x2="560" y2="340" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Signal Fusion -->
+  <g filter="url(#shadow)">
+    <rect x="180" y="340" width="600" height="60" rx="10" fill="url(#fusion)"/>
+    <text x="480" y="368" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">Multi-signal fusion engine (swing-weighted)</text>
+    <text x="480" y="388" text-anchor="middle" fill="#fbd38d" font-size="12">Tech(35%) + Sent(20%) + Fund(20%) + Vol(15%) + Macro(10%)</text>
+  </g>
+
+  <!-- Arrow -->
+  <line x1="480" y1="402" x2="480" y2="435" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Confidence + Meta-labeling -->
+  <g filter="url(#shadow)">
+    <rect x="130" y="438" width="310" height="55" rx="10" fill="url(#conf)"/>
+    <text x="285" y="463" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">Confidence scoring</text>
+    <text x="285" y="481" text-anchor="middle" fill="#fbb6ce" font-size="11">&lt;40% kill | 40-60% watch | 60-80% act | &gt;80% conviction</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="470" y="438" width="340" height="55" rx="10" fill="url(#conf)"/>
+    <text x="640" y="463" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">Meta-labeling + Swing fields</text>
+    <text x="640" y="481" text-anchor="middle" fill="#fbb6ce" font-size="11">Direction + confidence + hold_days + swing_phase</text>
+  </g>
+
+  <!-- Arrow -->
+  <line x1="480" y1="495" x2="480" y2="530" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- VectorBT -->
+  <g filter="url(#shadow)">
+    <rect x="200" y="533" width="560" height="55" rx="10" fill="url(#bt)"/>
+    <text x="480" y="558" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">VectorBT Pro backtesting</text>
+    <text x="480" y="578" text-anchor="middle" fill="#fbd38d" font-size="12">Indian costs: STT, GST, stamp, SEBI, DP | QuantStats tearsheets</text>
+  </g>
+
+  <!-- Arrow -->
+  <line x1="480" y1="590" x2="480" y2="625" stroke="#718096" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- OUT -->
+  <g filter="url(#shadow)">
+    <rect x="100" y="628" width="760" height="50" rx="10" fill="url(#out)"/>
+    <text x="480" y="650" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">OUT: {ticker, direction, confidence, target, stop_loss, hold_days, risk_reward, swing_phase}</text>
+    <text x="480" y="668" text-anchor="middle" fill="#9ae6b4" font-size="11">→ Phase 3 Intelligence Layer</text>
+  </g>
+</svg>
