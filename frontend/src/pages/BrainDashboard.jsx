@@ -18,6 +18,12 @@ import {
   Layers,
   ChevronRight,
   Loader2,
+  TrendingUp,
+  TrendingDown,
+  Target,
+  ShieldCheck,
+  Cpu,
+  LineChart,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -97,15 +103,28 @@ export default function BrainDashboard() {
   const [computeResult, setComputeResult] = useState(null);
   const [computeLoading, setComputeLoading] = useState(false);
 
+  // Phase 2 state
+  const [modelStatus, setModelStatus] = useState(null);
+  const [trainSymbol, setTrainSymbol] = useState("");
+  const [trainLoading, setTrainLoading] = useState(false);
+  const [trainResult, setTrainResult] = useState(null);
+  const [signalSymbol, setSignalSymbol] = useState("");
+  const [signalLoading, setSignalLoading] = useState(false);
+  const [signalResult, setSignalResult] = useState(null);
+  const [backtestSymbol, setBacktestSymbol] = useState("");
+  const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestResult, setBacktestResult] = useState(null);
+
   const fetchAll = useCallback(async () => {
     try {
-      const [healthRes, batchRes, historyRes, featureRes, topicsRes, summaryRes] = await Promise.allSettled([
+      const [healthRes, batchRes, historyRes, featureRes, topicsRes, summaryRes, modelRes] = await Promise.allSettled([
         fetch(`${API_URL}/api/brain/health`),
         fetch(`${API_URL}/api/brain/batch/status`),
         fetch(`${API_URL}/api/brain/batch/history?limit=10`),
         fetch(`${API_URL}/api/brain/features/status`),
         fetch(`${API_URL}/api/brain/kafka/topics`),
         fetch(`${API_URL}/api/brain/phase1/summary`),
+        fetch(`${API_URL}/api/brain/models/status`),
       ]);
 
       if (healthRes.status === "fulfilled" && healthRes.value.ok) setHealth(await healthRes.value.json());
@@ -117,6 +136,7 @@ export default function BrainDashboard() {
       if (featureRes.status === "fulfilled" && featureRes.value.ok) setFeatureStatus(await featureRes.value.json());
       if (topicsRes.status === "fulfilled" && topicsRes.value.ok) setKafkaTopics(await topicsRes.value.json());
       if (summaryRes.status === "fulfilled" && summaryRes.value.ok) setPhase1Summary(await summaryRes.value.json());
+      if (modelRes.status === "fulfilled" && modelRes.value.ok) setModelStatus(await modelRes.value.json());
     } catch (err) {
       console.error("Error fetching brain data:", err);
     } finally {
@@ -164,6 +184,71 @@ export default function BrainDashboard() {
       toast.error(`Error computing features: ${err.message}`);
     } finally {
       setComputeLoading(false);
+    }
+  };
+
+  // Phase 2 handlers
+  const trainModels = async () => {
+    if (!trainSymbol.trim()) return;
+    setTrainLoading(true);
+    setTrainResult(null);
+    try {
+      const res = await fetch(`${API_URL}/api/brain/models/train`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: trainSymbol.trim().toUpperCase(), horizon: 5 }),
+      });
+      const data = await res.json();
+      setTrainResult(data);
+      if (data.results) toast.success(`Models trained for ${trainSymbol.toUpperCase()}`);
+      else toast.error(data.detail || "Training failed");
+      await fetchAll();
+    } catch (err) {
+      toast.error(`Training error: ${err.message}`);
+    } finally {
+      setTrainLoading(false);
+    }
+  };
+
+  const generateSignal = async () => {
+    if (!signalSymbol.trim()) return;
+    setSignalLoading(true);
+    setSignalResult(null);
+    try {
+      const res = await fetch(`${API_URL}/api/brain/signals/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: signalSymbol.trim().toUpperCase(), current_price: 0 }),
+      });
+      const data = await res.json();
+      setSignalResult(data);
+      if (data.direction) toast.success(`Signal: ${data.direction} for ${signalSymbol.toUpperCase()}`);
+      else toast.error(data.detail || "Signal generation failed");
+    } catch (err) {
+      toast.error(`Signal error: ${err.message}`);
+    } finally {
+      setSignalLoading(false);
+    }
+  };
+
+  const runBacktest = async () => {
+    if (!backtestSymbol.trim()) return;
+    setBacktestLoading(true);
+    setBacktestResult(null);
+    try {
+      const res = await fetch(`${API_URL}/api/brain/backtest/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: backtestSymbol.trim().toUpperCase(), horizon: 5 }),
+      });
+      const data = await res.json();
+      setBacktestResult(data);
+      if (data.metrics) toast.success(`Backtest complete for ${backtestSymbol.toUpperCase()}`);
+      else toast.error(data.detail || "Backtest failed");
+    } catch (err) {
+      toast.error(`Backtest error: ${err.message}`);
+    } finally {
+      setBacktestLoading(false);
     }
   };
 
@@ -219,6 +304,9 @@ export default function BrainDashboard() {
           { label: "DAGs Active", value: batchStatus?.enabled_dags || 0, icon: GitBranch, color: "text-blue-400" },
           { label: "Kafka Topics", value: kafkaTopics?.total_topics || 0, icon: Radio, color: "text-amber-400" },
           { label: "Features Computed", value: health?.stats?.features_computed || 0, icon: Layers, color: "text-cyan-400" },
+          { label: "Models Loaded", value: modelStatus?.loaded_models?.length || 0, icon: Cpu, color: "text-pink-400" },
+          { label: "Signals Generated", value: health?.stats?.signals_generated || 0, icon: Target, color: "text-orange-400" },
+          { label: "Backtests Run", value: health?.stats?.backtests_run || 0, icon: LineChart, color: "text-teal-400" },
         ].map((stat) => (
           <div key={stat.label} className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -473,6 +561,242 @@ export default function BrainDashboard() {
               </div>
             ) : (
               <p className="text-xs text-zinc-500">No features computed. YFinance may be unavailable in this environment.</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ============ Phase 2: AI/ML Models ============ */}
+      <div className="border-t border-zinc-800 pt-4">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="p-2 rounded-lg bg-gradient-to-br from-pink-600 to-rose-700 shadow-lg shadow-pink-900/20">
+            <Cpu className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-zinc-100">Phase 2 — AI/ML & Signal Generation</h2>
+            <p className="text-xs text-zinc-500">Gradient boosting ensemble, GARCH volatility, multi-signal fusion, backtesting</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Phase 2 Subsystem Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <SubsystemCard name="Model Manager" icon={Cpu} data={health?.subsystems?.model_manager}>
+          <div className="divide-y divide-zinc-800">
+            <MetricItem label="Loaded Models" value={modelStatus?.loaded_models?.length || 0} />
+            <MetricItem label="Total Experiments" value={modelStatus?.stats?.total_experiments || 0} />
+            <MetricItem label="Predictions Served" value={modelStatus?.stats?.predictions_served || 0} />
+            <MetricItem label="Training Time" value={`${(modelStatus?.stats?.total_training_time_s || 0).toFixed(2)}s`} />
+          </div>
+          {modelStatus?.loaded_models?.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {modelStatus.loaded_models.map((m) => (
+                <span key={m} className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-pink-500/10 text-pink-400 border border-pink-500/20">
+                  {m}
+                </span>
+              ))}
+            </div>
+          )}
+        </SubsystemCard>
+
+        <SubsystemCard name="Signal Pipeline" icon={Target} data={health?.subsystems?.signal_pipeline}>
+          <div className="divide-y divide-zinc-800">
+            <MetricItem label="Active Signals" value={health?.subsystems?.signal_pipeline?.active_signals || 0} />
+            <MetricItem label="Fusion Weights" value="Tech 25% + ML 25% + Sent 15% + Fund 15%" />
+            <MetricItem label="Signals Generated" value={health?.stats?.signals_generated || 0} />
+          </div>
+        </SubsystemCard>
+
+        <SubsystemCard name="Backtest Engine" icon={LineChart} data={health?.subsystems?.backtest_engine}>
+          <div className="divide-y divide-zinc-800">
+            <MetricItem label="Capital" value={`₹${((health?.subsystems?.backtest_engine?.initial_capital || 0) / 100000).toFixed(1)}L`} />
+            <MetricItem label="Cost Model" value="Indian (STT+GST+SEBI)" />
+            <MetricItem label="Backtests Run" value={health?.stats?.backtests_run || 0} />
+          </div>
+        </SubsystemCard>
+      </div>
+
+      {/* Train Models */}
+      <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Cpu className="w-5 h-5 text-pink-400" />
+          <h2 className="text-lg font-semibold text-zinc-200">Train ML Models</h2>
+          <span className="text-xs text-zinc-500 ml-auto">XGBoost + LightGBM + GARCH</span>
+        </div>
+        <div className="flex items-center gap-3 mb-4">
+          <input
+            type="text"
+            value={trainSymbol}
+            onChange={(e) => setTrainSymbol(e.target.value.toUpperCase())}
+            placeholder="Enter symbol (e.g. RELIANCE)"
+            className="flex-1 px-3 py-2 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-pink-500"
+            onKeyDown={(e) => e.key === "Enter" && trainModels()}
+          />
+          <button
+            onClick={trainModels}
+            disabled={trainLoading || !trainSymbol.trim()}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-pink-600 text-white hover:bg-pink-500 disabled:opacity-50 transition-colors"
+          >
+            {trainLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            Train
+          </button>
+        </div>
+        {trainResult?.results && (
+          <div className="bg-zinc-800/50 rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-zinc-200">{trainResult.symbol}</span>
+              <span className="text-xs text-zinc-500">{trainResult.samples} samples, {trainResult.features} features</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {Object.entries(trainResult.results).map(([name, exp]) => (
+                <div key={name} className="bg-zinc-900/60 rounded-lg p-3 border border-zinc-700/50">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-medium text-zinc-300">{name}</span>
+                    <StatusBadge status={exp.status} />
+                  </div>
+                  <div className="space-y-1">
+                    {exp.metrics && Object.entries(exp.metrics).filter(([k]) => !['error','n_samples','n_features'].includes(k)).slice(0, 4).map(([k, v]) => (
+                      <div key={k} className="flex justify-between text-[10px]">
+                        <span className="text-zinc-500">{k}</span>
+                        <span className="text-zinc-300 font-mono">{typeof v === 'number' ? v.toFixed(4) : String(v)}</span>
+                      </div>
+                    ))}
+                    {exp.duration_s && <div className="text-[10px] text-zinc-500 mt-1">{exp.duration_s.toFixed(3)}s</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Generate Signal */}
+      <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Target className="w-5 h-5 text-orange-400" />
+          <h2 className="text-lg font-semibold text-zinc-200">Generate Signal</h2>
+          <span className="text-xs text-zinc-500 ml-auto">Multi-signal fusion</span>
+        </div>
+        <div className="flex items-center gap-3 mb-4">
+          <input
+            type="text"
+            value={signalSymbol}
+            onChange={(e) => setSignalSymbol(e.target.value.toUpperCase())}
+            placeholder="Enter symbol (e.g. TCS)"
+            className="flex-1 px-3 py-2 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+            onKeyDown={(e) => e.key === "Enter" && generateSignal()}
+          />
+          <button
+            onClick={generateSignal}
+            disabled={signalLoading || !signalSymbol.trim()}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-orange-600 text-white hover:bg-orange-500 disabled:opacity-50 transition-colors"
+          >
+            {signalLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Target className="w-4 h-4" />}
+            Generate
+          </button>
+        </div>
+        {signalResult?.direction && (
+          <div className="bg-zinc-800/50 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-zinc-200">{signalResult.symbol}</span>
+                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold border ${
+                  signalResult.direction === "BUY" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" :
+                  signalResult.direction === "SELL" ? "bg-red-500/20 text-red-400 border-red-500/30" :
+                  "bg-zinc-500/20 text-zinc-400 border-zinc-500/30"
+                }`}>
+                  {signalResult.direction === "BUY" ? <TrendingUp className="w-4 h-4" /> :
+                   signalResult.direction === "SELL" ? <TrendingDown className="w-4 h-4" /> : null}
+                  {signalResult.direction}
+                </span>
+                <span className="text-sm text-zinc-400">{signalResult.confidence}% confidence</span>
+              </div>
+              <span className="text-xs text-zinc-500">{signalResult.timeframe}</span>
+            </div>
+            <div className="grid grid-cols-4 gap-4 mb-3">
+              <div><span className="text-[10px] text-zinc-500 block">Entry</span><span className="text-sm font-mono text-zinc-300">₹{signalResult.entry_price?.toFixed(2)}</span></div>
+              <div><span className="text-[10px] text-zinc-500 block">Target</span><span className="text-sm font-mono text-emerald-400">₹{signalResult.target_price?.toFixed(2)}</span></div>
+              <div><span className="text-[10px] text-zinc-500 block">Stop Loss</span><span className="text-sm font-mono text-red-400">₹{signalResult.stop_loss?.toFixed(2)}</span></div>
+              <div><span className="text-[10px] text-zinc-500 block">Risk Level</span><span className="text-sm text-zinc-300">{signalResult.risk_level}</span></div>
+            </div>
+            {signalResult.contributing_factors?.length > 0 && (
+              <div className="space-y-1">
+                {signalResult.contributing_factors.map((f, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <div className="w-16 text-zinc-500">{f.name}</div>
+                    <div className="flex-1 bg-zinc-800 rounded-full h-1.5">
+                      <div className={`h-1.5 rounded-full ${f.score > 0 ? "bg-emerald-500" : f.score < 0 ? "bg-red-500" : "bg-zinc-600"}`}
+                        style={{ width: `${Math.min(100, Math.abs(f.score) * 100)}%` }} />
+                    </div>
+                    <div className="w-10 text-right text-zinc-400">{(f.weight * 100).toFixed(0)}%</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Backtest */}
+      <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <LineChart className="w-5 h-5 text-teal-400" />
+          <h2 className="text-lg font-semibold text-zinc-200">Run Backtest</h2>
+          <span className="text-xs text-zinc-500 ml-auto">With Indian cost model</span>
+        </div>
+        <div className="flex items-center gap-3 mb-4">
+          <input
+            type="text"
+            value={backtestSymbol}
+            onChange={(e) => setBacktestSymbol(e.target.value.toUpperCase())}
+            placeholder="Enter symbol (e.g. HDFCBANK)"
+            className="flex-1 px-3 py-2 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+            onKeyDown={(e) => e.key === "Enter" && runBacktest()}
+          />
+          <button
+            onClick={runBacktest}
+            disabled={backtestLoading || !backtestSymbol.trim()}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-teal-600 text-white hover:bg-teal-500 disabled:opacity-50 transition-colors"
+          >
+            {backtestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            Backtest
+          </button>
+        </div>
+        {backtestResult?.metrics && (
+          <div className="bg-zinc-800/50 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-sm font-semibold text-zinc-200">{backtestResult.symbol} Backtest</span>
+              <span className={`text-lg font-bold ${backtestResult.total_return_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {backtestResult.total_return_pct >= 0 ? "+" : ""}{backtestResult.total_return_pct?.toFixed(2)}%
+              </span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              {[
+                { label: "Sharpe Ratio", value: backtestResult.metrics.sharpe_ratio?.toFixed(2), good: backtestResult.metrics.sharpe_ratio > 1 },
+                { label: "Sortino Ratio", value: backtestResult.metrics.sortino_ratio?.toFixed(2), good: backtestResult.metrics.sortino_ratio > 1 },
+                { label: "Max Drawdown", value: `${backtestResult.metrics.max_drawdown_pct?.toFixed(2)}%`, good: backtestResult.metrics.max_drawdown_pct > -10 },
+                { label: "Win Rate", value: `${backtestResult.metrics.win_rate_pct?.toFixed(1)}%`, good: backtestResult.metrics.win_rate_pct > 50 },
+                { label: "Profit Factor", value: backtestResult.metrics.profit_factor?.toFixed(2) || "N/A", good: backtestResult.metrics.profit_factor > 1.5 },
+                { label: "Total Trades", value: backtestResult.total_trades },
+                { label: "Avg Hold Days", value: `${backtestResult.metrics.avg_hold_days?.toFixed(1)}d` },
+                { label: "Total Costs", value: `₹${backtestResult.metrics.total_costs_inr?.toFixed(0)}` },
+              ].map((m) => (
+                <div key={m.label} className="bg-zinc-900/60 rounded-lg p-2.5 border border-zinc-700/30">
+                  <span className="text-[10px] text-zinc-500 block">{m.label}</span>
+                  <span className={`text-sm font-mono ${m.good === true ? "text-emerald-400" : m.good === false ? "text-red-400" : "text-zinc-300"}`}>
+                    {m.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {backtestResult.metrics.exit_reasons && (
+              <div className="flex gap-2 flex-wrap">
+                {Object.entries(backtestResult.metrics.exit_reasons).map(([reason, count]) => (
+                  <span key={reason} className="px-2 py-0.5 text-[10px] rounded-full bg-zinc-700/50 text-zinc-400">
+                    {reason}: {count}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
         )}

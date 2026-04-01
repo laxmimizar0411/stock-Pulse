@@ -29,11 +29,12 @@ def _env_bool(key: str, default: bool) -> bool:
 @dataclass
 class SignalFusionWeights:
     """Weights for multi-signal fusion. Must sum to 1.0."""
-    technical: float = 0.30
-    sentiment: float = 0.25
-    fundamental: float = 0.20
-    volume: float = 0.15
+    technical: float = 0.25
+    sentiment: float = 0.15
+    fundamental: float = 0.15
+    volume: float = 0.10
     macro: float = 0.10
+    ml_model: float = 0.25
 
 
 @dataclass

@@ -149,3 +149,11 @@ lz4==4.3.3
 # Stock Pulse Brain — Storage layer
 minio==7.2.15
 pyarrow==18.1.0
+
+# Stock Pulse Brain — Phase 2: AI/ML + Signal Generation
+xgboost>=2.0.0
+lightgbm>=4.0.0
+arch>=7.0.0
+optuna>=3.0.0
+shap>=0.43.0
+onnxruntime>=1.17.0

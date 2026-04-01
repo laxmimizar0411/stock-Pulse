@@ -83,7 +83,7 @@ class SignalFusionEngine:
             "fundamental": weights["fundamental"],
             "volume": weights["volume"],
             "macro": weights["macro"],
-            "ml_model": weights.get("ml_model", 0.0),
+            "ml_model": weights.get("ml_model", 0.25),
         }
 
         for source, weight in source_weight_map.items():
@@ -175,6 +175,7 @@ class SignalFusionEngine:
             "fundamental": cfg.fundamental,
             "volume": cfg.volume,
             "macro": cfg.macro,
+            "ml_model": getattr(cfg, 'ml_model', 0.25),
         }
 
         if regime == MarketRegime.BULL:

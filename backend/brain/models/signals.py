@@ -39,6 +39,11 @@ class BrainSignal(BaseModel):
     regime: Optional[str] = None
     model_version: str = ""
 
+    # Swing-specific fields (Phase 2)
+    expected_hold_days: Optional[int] = Field(None, description="Expected hold period in days")
+    swing_phase: Optional[str] = Field(None, description="breakout, pullback, trend, consolidation")
+    signal_tier: Optional[str] = Field(None, description="<40% suppressed, 40-60% watchlist, 60-80% actionable, >80% conviction")
+
 
 class RegimeStatus(BaseModel):
     """Current market regime status."""

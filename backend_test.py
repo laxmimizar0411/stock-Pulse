@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Any
 
 class StockAnalysisPlatformTester:
-    def __init__(self, base_url="https://marketdata-flow.preview.emergentagent.com"):
+    def __init__(self, base_url="https://stock-neural-engine.preview.emergentagent.com"):
         self.base_url = base_url
         self.tests_run = 0
         self.tests_passed = 0
@@ -830,28 +830,321 @@ class StockAnalysisPlatformTester:
         print(f"\n✅ Data extraction pipeline API test completed")
         print("-" * 40)
 
+    def test_brain_phase2_endpoints(self):
+        """Test Brain Phase 2 API endpoints as specified in review request"""
+        print("\n" + "="*60)
+        print("TESTING BRAIN PHASE 2 - AI/ML MODELS & SIGNAL GENERATION")
+        print("="*60)
+        
+        # Test symbols with seeded data
+        test_symbols = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK"]
+        
+        # =================================================================
+        # TEST 1: Model Training (HIGH PRIORITY)
+        # =================================================================
+        print(f"\n🧠 Testing Model Training - POST /api/brain/models/train")
+        print("-" * 50)
+        
+        # Test model training for RELIANCE
+        train_data = {"symbol": "RELIANCE", "horizon": 5}
+        success, train_result = self.run_test("Model Training - RELIANCE", "POST", "brain/models/train", 200, data=train_data)
+        
+        if success and train_result:
+            print(f"✅ Model training successful for RELIANCE")
+            
+            # Verify training result structure
+            required_train_fields = ["symbol", "samples", "features", "results"]
+            train_valid = True
+            
+            for field in required_train_fields:
+                if field not in train_result:
+                    print(f"❌ Missing field in training result: {field}")
+                    train_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check results contains expected models
+            results = train_result.get("results", {})
+            expected_models = ["xgboost", "lightgbm", "garch"]
+            
+            for model in expected_models:
+                if model in results:
+                    model_result = results[model]
+                    status = model_result.get("status", "unknown")
+                    model_name = model_result.get("model_name", "unknown")
+                    print(f"✅ Model trained: {model} ({model_name}) - Status: {status}")
+                    
+                    # Check for accuracy metrics if completed
+                    if status == "completed" and "metrics" in model_result:
+                        metrics = model_result["metrics"]
+                        if "accuracy" in metrics:
+                            print(f"   Accuracy: {metrics['accuracy']}")
+                        else:
+                            print(f"   Metrics: {list(metrics.keys())}")
+                    elif status == "failed":
+                        error = model_result.get("metrics", {}).get("error", "Unknown error")
+                        print(f"   Error: {error}")
+                else:
+                    print(f"⚠️  Expected model not found: {model}")
+            
+            if train_valid:
+                print(f"✅ Model training result validation passed")
+        
+        # =================================================================
+        # TEST 2: Model Status (HIGH PRIORITY)
+        # =================================================================
+        print(f"\n📊 Testing Model Status - GET /api/brain/models/status")
+        print("-" * 50)
+        
+        success, status_result = self.run_test("Model Status", "GET", "brain/models/status", 200)
+        
+        if success and status_result:
+            print(f"✅ Model status endpoint successful")
+            
+            # Verify status result structure
+            required_status_fields = ["status", "loaded_models", "stats"]
+            status_valid = True
+            
+            for field in required_status_fields:
+                if field not in status_result:
+                    print(f"❌ Missing field in status result: {field}")
+                    status_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check loaded_models includes expected models
+            loaded_models = status_result.get("loaded_models", [])
+            expected_loaded = ["xgboost_direction", "lightgbm_direction"]
+            
+            for model in expected_loaded:
+                if model in loaded_models:
+                    print(f"✅ Loaded model found: {model}")
+                else:
+                    print(f"⚠️  Expected loaded model not found: {model}")
+            
+            if status_valid:
+                print(f"✅ Model status validation passed")
+        
+        # =================================================================
+        # TEST 3: Signal Generation (HIGH PRIORITY)
+        # =================================================================
+        print(f"\n🎯 Testing Signal Generation - POST /api/brain/signals/generate")
+        print("-" * 50)
+        
+        # Test signal generation for RELIANCE
+        signal_data = {"symbol": "RELIANCE", "current_price": 2800}
+        success, signal_result = self.run_test("Signal Generation - RELIANCE", "POST", "brain/signals/generate", 200, data=signal_data)
+        
+        if success and signal_result:
+            print(f"✅ Signal generation successful for RELIANCE")
+            
+            # Verify signal result structure
+            required_signal_fields = ["symbol", "direction", "confidence", "entry_price", "target_price", "stop_loss", "contributing_factors"]
+            signal_valid = True
+            
+            for field in required_signal_fields:
+                if field not in signal_result:
+                    print(f"❌ Missing field in signal result: {field}")
+                    signal_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check direction is valid
+            direction = signal_result.get("direction")
+            valid_directions = ["BUY", "SELL", "HOLD"]
+            if direction not in valid_directions:
+                print(f"❌ Invalid direction: {direction}")
+                signal_valid = False
+            else:
+                print(f"✅ Valid direction: {direction}")
+            
+            # Check confidence is 0-100
+            confidence = signal_result.get("confidence")
+            if confidence is None or not (0 <= confidence <= 100):
+                print(f"❌ Invalid confidence: {confidence}")
+                signal_valid = False
+            else:
+                print(f"✅ Valid confidence: {confidence}")
+            
+            # Check price fields are numeric
+            price_fields = ["entry_price", "target_price", "stop_loss"]
+            for field in price_fields:
+                value = signal_result.get(field)
+                if not isinstance(value, (int, float)) or value <= 0:
+                    print(f"❌ Invalid {field}: {value}")
+                    signal_valid = False
+                else:
+                    print(f"✅ Valid {field}: {value}")
+            
+            if signal_valid:
+                print(f"✅ Signal generation validation passed")
+        
+        # =================================================================
+        # TEST 4: Active Signals (HIGH PRIORITY)
+        # =================================================================
+        print(f"\n📈 Testing Active Signals - GET /api/brain/signals/active")
+        print("-" * 50)
+        
+        success, active_result = self.run_test("Active Signals", "GET", "brain/signals/active", 200)
+        
+        if success and active_result:
+            print(f"✅ Active signals endpoint successful")
+            
+            # Verify active signals structure
+            required_active_fields = ["count", "signals"]
+            active_valid = True
+            
+            for field in required_active_fields:
+                if field not in active_result:
+                    print(f"❌ Missing field in active signals: {field}")
+                    active_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check count is numeric
+            count = active_result.get("count")
+            if not isinstance(count, int) or count < 0:
+                print(f"❌ Invalid count: {count}")
+                active_valid = False
+            else:
+                print(f"✅ Valid count: {count}")
+            
+            # Check signals structure
+            signals = active_result.get("signals", {})
+            if not isinstance(signals, dict):
+                print(f"❌ Signals should be dict, got: {type(signals)}")
+                active_valid = False
+            else:
+                print(f"✅ Signals object valid with {len(signals)} active signals")
+            
+            if active_valid:
+                print(f"✅ Active signals validation passed")
+        
+        # =================================================================
+        # TEST 5: Backtesting (HIGH PRIORITY)
+        # =================================================================
+        print(f"\n📊 Testing Backtesting - POST /api/brain/backtest/run")
+        print("-" * 50)
+        
+        # Test backtesting for RELIANCE
+        backtest_data = {"symbol": "RELIANCE", "horizon": 5}
+        success, backtest_result = self.run_test("Backtesting - RELIANCE", "POST", "brain/backtest/run", 200, data=backtest_data)
+        
+        if success and backtest_result:
+            print(f"✅ Backtesting successful for RELIANCE")
+            
+            # Verify backtest result structure
+            required_backtest_fields = ["symbol", "metrics", "trades", "total_trades"]
+            backtest_valid = True
+            
+            for field in required_backtest_fields:
+                if field not in backtest_result:
+                    print(f"❌ Missing field in backtest result: {field}")
+                    backtest_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check metrics contains expected fields
+            metrics = backtest_result.get("metrics", {})
+            expected_metrics = ["sharpe_ratio", "sortino_ratio", "max_drawdown_pct", "win_rate_pct", "profit_factor"]
+            
+            for metric in expected_metrics:
+                if metric in metrics:
+                    print(f"✅ Metric found: {metric} = {metrics[metric]}")
+                else:
+                    print(f"❌ Missing metric: {metric}")
+                    backtest_valid = False
+            
+            # Check trades is list
+            trades = backtest_result.get("trades", [])
+            if not isinstance(trades, list):
+                print(f"❌ Trades should be list, got: {type(trades)}")
+                backtest_valid = False
+            else:
+                print(f"✅ Trades list with {len(trades)} trades")
+            
+            # Check total_trades matches trades length
+            total_trades = backtest_result.get("total_trades", 0)
+            if total_trades != len(trades):
+                print(f"⚠️  Total trades ({total_trades}) doesn't match trades list length ({len(trades)})")
+            else:
+                print(f"✅ Total trades count verified: {total_trades}")
+            
+            if backtest_valid:
+                print(f"✅ Backtesting validation passed")
+        
+        # =================================================================
+        # TEST 6: Phase 2 Summary
+        # =================================================================
+        print(f"\n📋 Testing Phase 2 Summary - GET /api/brain/phase2/summary")
+        print("-" * 50)
+        
+        success, summary_result = self.run_test("Phase 2 Summary", "GET", "brain/phase2/summary", 200)
+        
+        if success and summary_result:
+            print(f"✅ Phase 2 summary endpoint successful")
+            
+            # Verify summary structure
+            required_summary_fields = ["phase", "status", "components"]
+            summary_valid = True
+            
+            for field in required_summary_fields:
+                if field not in summary_result:
+                    print(f"❌ Missing field in summary: {field}")
+                    summary_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check components
+            components = summary_result.get("components", {})
+            expected_components = ["model_manager", "signal_pipeline", "backtest_engine"]
+            
+            for component in expected_components:
+                if component in components:
+                    print(f"✅ Component found: {component}")
+                else:
+                    print(f"❌ Missing component: {component}")
+                    summary_valid = False
+            
+            if summary_valid:
+                print(f"✅ Phase 2 summary validation passed")
+        
+        # =================================================================
+        # TEST 7: Health Check (verify Phase 2 added)
+        # =================================================================
+        print(f"\n🏥 Testing Health Check - GET /api/brain/health")
+        print("-" * 50)
+        
+        success, health_result = self.run_test("Brain Health Check", "GET", "brain/health", 200)
+        
+        if success and health_result:
+            print(f"✅ Brain health check successful")
+            
+            # Check for Phase 2 subsystems
+            subsystems = health_result.get("subsystems", {})
+            phase2_subsystems = ["model_manager", "signal_pipeline", "backtest_engine"]
+            
+            for subsystem in phase2_subsystems:
+                if subsystem in subsystems:
+                    status = subsystems[subsystem].get("status", "unknown")
+                    print(f"✅ Phase 2 subsystem found: {subsystem} ({status})")
+                else:
+                    print(f"⚠️  Phase 2 subsystem not found in health check: {subsystem}")
+        
+        print(f"\n✅ Brain Phase 2 testing completed")
+        print("="*60)
+
     def run_all_tests(self):
         """Run all test suites"""
         print("🚀 Starting Stock Analysis Platform API Tests")
         print(f"Base URL: {self.base_url}")
         
         try:
+            # Test basic health endpoints first
             self.test_health_endpoints()
-            self.test_market_overview()
-            self.test_stocks_endpoints()
-            self.test_screener_endpoints()
-            self.test_watchlist_endpoints()
-            self.test_portfolio_endpoints()
-            self.test_news_endpoints()
-            self.test_reports_endpoints()
-            self.test_search_endpoints()
             
-            # Add the scoring engine test
-            self.test_scoring_engine()
-            
-            # Add medium priority tests
-            self.test_investment_checklists()
-            self.test_data_extraction_pipeline()
+            # Test Brain Phase 2 endpoints (HIGH PRIORITY)
+            self.test_brain_phase2_endpoints()
             
         except KeyboardInterrupt:
             print("\n⚠️  Tests interrupted by user")

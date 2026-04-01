@@ -35,7 +35,7 @@ class EventType(str, Enum):
 @dataclass
 class BrainEvent:
     """Base event for the Brain event bus."""
-    event_type: EventType
+    event_type: EventType = EventType.TICK
     event_id: str = field(default_factory=_new_id)
     timestamp: datetime = field(default_factory=_utcnow)
     source: str = ""

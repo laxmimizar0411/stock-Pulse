@@ -424,3 +424,224 @@ async def phase1_summary():
             "GET  /api/brain/ingestion/status",
         ],
     }
+
+
+# ===========================================================================
+# Phase 2: AI/ML Models & Swing Signal Generation
+# ===========================================================================
+
+
+class TrainModelsRequest(BaseModel):
+    symbol: str
+    horizon: int = 5
+
+
+class GenerateSignalRequest(BaseModel):
+    symbol: str
+    current_price: float = 0.0
+
+
+class BacktestRequest(BaseModel):
+    symbol: str
+    horizon: int = 5
+    initial_capital: float = 1_000_000
+    stop_loss_pct: float = 0.03
+    take_profit_pct: float = 0.06
+    max_hold_days: int = 30
+
+
+# ---------------------------------------------------------------------------
+# Model Training & Prediction
+# ---------------------------------------------------------------------------
+
+@router.post("/models/train")
+async def train_models(request: TrainModelsRequest):
+    """Train ML models (XGBoost, LightGBM, GARCH) for a symbol."""
+    if not brain_engine.model_manager:
+        raise HTTPException(status_code=503, detail="Model manager not initialized")
+
+    symbol = request.symbol.upper().strip()
+    try:
+        result = await brain_engine.train_models(symbol, horizon=request.horizon)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error training models for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/models/status")
+async def model_status():
+    """Get ML model status and experiment history."""
+    if not brain_engine.model_manager:
+        return {"status": "not_initialized", "message": "Model manager not started"}
+
+    return {
+        "status": "ready",
+        "loaded_models": brain_engine.model_manager.get_loaded_models(),
+        "stats": brain_engine.model_manager.get_stats(),
+        "recent_experiments": brain_engine.model_manager.get_experiment_history(limit=10),
+    }
+
+
+@router.post("/models/predict/{model_name}")
+async def model_predict(model_name: str, request: ComputeFeaturesRequest):
+    """Get prediction from a specific trained model."""
+    if not brain_engine.model_manager:
+        raise HTTPException(status_code=503, detail="Model manager not initialized")
+
+    symbol = request.symbol.upper().strip()
+
+    # Get features for prediction
+    features = await brain_engine.get_stored_features(symbol)
+    if not features or not features.get("features"):
+        # Compute fresh features
+        try:
+            feat_dict = await brain_engine.compute_features(symbol)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Cannot compute features for {symbol}")
+    else:
+        feat_dict = features["features"]
+
+    from brain.models_ml.feature_engineering import prepare_features
+    X, names = prepare_features(feat_dict)
+
+    result = await brain_engine.model_manager.predict(model_name, X)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return {
+        "symbol": symbol,
+        "model": model_name,
+        "prediction": result,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Signal Generation
+# ---------------------------------------------------------------------------
+
+@router.post("/signals/generate")
+async def generate_signal(request: GenerateSignalRequest):
+    """Generate a trading signal for a symbol."""
+    if not brain_engine.signal_fusion:
+        raise HTTPException(status_code=503, detail="Signal pipeline not initialized")
+
+    symbol = request.symbol.upper().strip()
+    try:
+        result = await brain_engine.generate_signal(symbol, request.current_price)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error generating signal for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/signals/active")
+async def active_signals():
+    """Get all currently active signals."""
+    if not brain_engine.signal_fusion:
+        return {"signals": [], "count": 0}
+
+    signals = brain_engine.signal_fusion._active_signals
+    return {
+        "count": len(signals),
+        "signals": {
+            sym: {
+                "direction": sig.direction.value if hasattr(sig.direction, 'value') else str(sig.direction),
+                "confidence": sig.confidence,
+                "entry_price": sig.entry_price,
+                "target_price": sig.target_price,
+                "stop_loss": sig.stop_loss,
+            }
+            for sym, sig in signals.items()
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Backtesting
+# ---------------------------------------------------------------------------
+
+@router.post("/backtest/run")
+async def run_backtest(request: BacktestRequest):
+    """Run a backtest for a symbol."""
+    if not brain_engine.backtest_engine:
+        raise HTTPException(status_code=503, detail="Backtest engine not initialized")
+
+    symbol = request.symbol.upper().strip()
+
+    # Update engine settings
+    brain_engine.backtest_engine.initial_capital = request.initial_capital
+    brain_engine.backtest_engine.stop_loss_pct = request.stop_loss_pct
+    brain_engine.backtest_engine.take_profit_pct = request.take_profit_pct
+    brain_engine.backtest_engine.max_hold_days = request.max_hold_days
+
+    try:
+        result = await brain_engine.run_backtest(symbol, horizon=request.horizon)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error running backtest for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 Summary
+# ---------------------------------------------------------------------------
+
+@router.get("/phase2/summary")
+async def phase2_summary():
+    """Get Phase 2 implementation summary."""
+    return {
+        "phase": "Phase 2: AI/ML Models & Swing Signal Generation",
+        "status": "active",
+        "components": {
+            "model_manager": {
+                "status": "ready" if brain_engine.model_manager else "not_initialized",
+                "description": "Centralized ML training, prediction, experiment tracking",
+                "loaded_models": brain_engine.model_manager.get_loaded_models() if brain_engine.model_manager else [],
+                "supported_models": ["xgboost_direction", "lightgbm_direction", "garch_volatility", "lstm_attention", "tft_multi_horizon"],
+            },
+            "signal_pipeline": {
+                "status": "ready" if brain_engine.signal_fusion else "not_initialized",
+                "description": "Multi-signal fusion: Technical(30%) + Sentiment(25%) + Fundamental(20%) + Volume(15%) + Macro(10%)",
+                "active_signals": len(brain_engine.signal_fusion._active_signals) if brain_engine.signal_fusion else 0,
+            },
+            "confidence_scorer": {
+                "status": "ready" if brain_engine.confidence_scorer else "not_initialized",
+                "description": "Multi-factor confidence scoring (0-100%)",
+            },
+            "backtest_engine": {
+                "status": "ready" if brain_engine.backtest_engine else "not_initialized",
+                "description": "Vectorized backtesting with Indian cost model (STT, GST, stamp duty, SEBI)",
+                "metrics": ["Sharpe", "Sortino", "Calmar", "Max DD", "Win Rate", "Profit Factor"],
+            },
+            "feature_engineering": {
+                "status": "ready",
+                "description": "Price-based feature construction, target labeling, correlation filtering",
+            },
+            "deep_learning": {
+                "lstm_attention": "Structure ready (requires PyTorch)",
+                "tft": "Structure ready (requires pytorch-forecasting)",
+            },
+        },
+        "api_endpoints": [
+            "POST /api/brain/models/train",
+            "GET  /api/brain/models/status",
+            "POST /api/brain/models/predict/{model_name}",
+            "POST /api/brain/signals/generate",
+            "GET  /api/brain/signals/active",
+            "POST /api/brain/backtest/run",
+            "GET  /api/brain/phase2/summary",
+        ],
+    }
