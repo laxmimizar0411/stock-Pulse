@@ -1,22 +1,32 @@
-# Stock Pulse Brain - Phase 1: Data Foundation & Event Infrastructure
+# Stock Pulse Brain - Implementation Progress
 
-## Summary
-Phase 1 of the Stock Pulse Brain system has been implemented, providing the complete data foundation and event infrastructure layer.
+## Phase 1: Data Foundation & Event Infrastructure ✅
+- Brain Engine lifecycle management
+- 72-feature pipeline (technical, fundamental, macro, cross-sectional)
+- MongoDB-backed data fetchers with YFinance fallback
+- 5 batch DAGs (bhavcopy, fii_dii, fundamentals, corporate_actions, macro)
+- Kafka event bus (15 topics, stub mode)
+- Feature store (MongoDB fallback)
+- Storage layer (MinIO/filesystem)
+- Data quality engine
 
-## What Was Built
+## Phase 2: AI/ML Models & Swing Signal Generation ✅
+- Model Manager with experiment tracking (MongoDB-based)
+- XGBoost direction classifier (primary model)
+- LightGBM direction classifier (secondary model)
+- GARCH(1,1) volatility model
+- LSTM with Attention structure (requires PyTorch)
+- TFT multi-horizon structure (requires pytorch-forecasting)
+- 14-feature engineering pipeline from price data
+- Multi-signal fusion: Technical(25%) + ML(25%) + Sentiment(15%) + Fundamental(15%) + Volume(10%) + Macro(10%)
+- Confidence scoring
+- Vectorized backtesting with full Indian cost model
+- Comprehensive performance metrics (Sharpe, Sortino, Calmar, etc.)
 
-### Backend (brain/ module)
-- **Brain Engine** (`brain/engine.py`) — Central lifecycle manager wiring all Phase 1 subsystems
-- **Feature Pipeline** (`brain/features/`) — 72 features across 4 categories (technical, fundamental, macro, cross-sectional)
-- **Data Fetchers** (`brain/features/data_fetchers.py`) — MongoDB-backed with YFinance fallback for OHLCV, fundamentals, macro data
-- **Batch Scheduler** (`brain/batch/scheduler.py`) — Lightweight Airflow alternative with 5 DAGs
-- **Kafka Event Bus** (`brain/events/`) — 15 topics defined, runs in stub mode without broker
-- **Feature Store** — MongoDB fallback mode
-- **Storage Layer** — MinIO client with filesystem fallback
-- **Data Quality** — OHLCV integrity validation
+## API Endpoints (27 total)
+Phase 1: 13 endpoints | Phase 2: 7 endpoints | Existing: 7 endpoints
 
-### Frontend
-- **Brain Dashboard** (`pages/BrainDashboard.jsx`) — Full monitoring UI
+## Dhan API
+Credentials saved but auth failing (token may need refresh).
 
-## Next Steps
-- Phase 2: AI/ML Models & Swing Signal Generation
+## Next: Phase 3 — Intelligence Layer, LLM Agents & Risk Management

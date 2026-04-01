@@ -95,7 +95,10 @@ class GARCHModel(BaseBrainModel):
             self._fitted_result = am.fit(disp="off", **kwargs)
 
         cond_vol = self._fitted_result.conditional_volatility
-        self._current_vol = float(cond_vol.iloc[-1] / 100) if len(cond_vol) > 0 else 0.0
+        try:
+            self._current_vol = float(cond_vol.iloc[-1] / 100) if hasattr(cond_vol, 'iloc') and len(cond_vol) > 0 else float(cond_vol[-1] / 100) if len(cond_vol) > 0 else 0.0
+        except Exception:
+            self._current_vol = 0.0
 
         metrics = {
             "log_likelihood": float(self._fitted_result.loglikelihood),
@@ -126,9 +129,11 @@ class GARCHModel(BaseBrainModel):
         """
         if _HAS_ARCH and self._fitted_result is not None:
             forecasts = self._fitted_result.forecast(horizon=horizon)
-            # variance forecasts -> standard deviation, convert back from pct
-            variance = forecasts.variance.iloc[-1].values
-            vol = np.sqrt(variance) / 100.0
+            try:
+                variance = forecasts.variance.iloc[-1].values
+            except AttributeError:
+                variance = np.array(forecasts.variance[-1:]).flatten()
+            vol = np.sqrt(np.abs(variance)) / 100.0
             return vol
 
         # Naive fallback: repeat current vol estimate
