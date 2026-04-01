@@ -107,11 +107,18 @@
     <text x="310" y="220" text-anchor="middle" fill="#bee3f8" font-size="9">SEBI | RBI | Budget | Results</text>
   </g>
 
-  <!-- Arrows to LangGraph -->
+  <!-- Arrows to LangGraph (from Row 1 components) -->
   <line x1="125" y1="175" x2="380" y2="262" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
   <line x1="310" y1="175" x2="420" y2="262" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
   <line x1="505" y1="175" x2="500" y2="262" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
   <line x1="700" y1="175" x2="580" y2="262" stroke="#718096" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Arrows from Sector Rotation to Decision cascade -->
+  <line x1="885" y1="175" x2="830" y2="510" stroke="#bee3f8" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrowhead)"/>
+  <!-- Arrows from Dividend Intel to Decision cascade -->
+  <line x1="125" y1="229" x2="200" y2="510" stroke="#bee3f8" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrowhead)"/>
+  <!-- Arrows from Reg Calendar to Decision cascade -->
+  <line x1="310" y1="229" x2="350" y2="510" stroke="#bee3f8" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrowhead)"/>
 
   <!-- LangGraph Multi-Agent -->
   <g filter="url(#shadow)">
