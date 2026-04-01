@@ -21,6 +21,7 @@ import {
   Globe,
   Activity,
   CandlestickChart,
+  Brain,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -40,6 +41,7 @@ const navItems = [
   { path: "/data-pipeline", label: "Data Pipeline", icon: Database },
   { path: "/db-dashboard", label: "DB Dashboard", icon: Server },
   { path: "/pg-control", label: "PG Control", icon: HardDrive },
+  { path: "/brain", label: "Brain", icon: Brain },
   { path: "/news", label: "News Hub", icon: Newspaper },
   { path: "/reports", label: "Reports", icon: FileText },
 ];

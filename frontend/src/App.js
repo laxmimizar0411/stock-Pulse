@@ -17,6 +17,7 @@ import PostgresControl from "@/pages/PostgresControl";
 import MacroIndicators from "@/pages/MacroIndicators";
 import Derivatives from "@/pages/Derivatives";
 import IntradayMetrics from "@/pages/IntradayMetrics";
+import BrainDashboard from "@/pages/BrainDashboard";
 
 function App() {
   return (
@@ -39,6 +40,7 @@ function App() {
             <Route path="/data-pipeline" element={<DataPipeline />} />
             <Route path="/db-dashboard" element={<DatabaseDashboard />} />
             <Route path="/pg-control" element={<PostgresControl />} />
+            <Route path="/brain" element={<BrainDashboard />} />
           </Routes>
         </Layout>
       </BrowserRouter>
