@@ -65,10 +65,22 @@ class BrainEngine:
         self.confidence_scorer = None
         self.backtest_engine = None
 
+        # Phase 3 subsystems
+        self.hmm_detector = None
+        self.kmeans_detector = None
+        self.gmm_detector = None
+        self.cusum_detector = None
+        self.regime_router = None
+        self.position_sizer = None
+        self.regime_store = None
+        self._current_regime = None
+        self._regime_probabilities = {}
+        self._regime_last_trained = None
+
         # Database reference
         self._db = None
 
-        # Phase 1+2 statistics
+        # Phase 1+2+3 statistics
         self._stats = {
             "features_computed": 0,
             "batch_runs": 0,
@@ -76,6 +88,8 @@ class BrainEngine:
             "models_trained": 0,
             "signals_generated": 0,
             "backtests_run": 0,
+            "regime_detections": 0,
+            "regime_retrains": 0,
         }
 
     @property
@@ -125,9 +139,12 @@ class BrainEngine:
         # 10. Initialize Backtest Engine (Phase 2)
         await self._start_backtest_engine()
 
+        # 11. Initialize Regime Detection (Phase 3)
+        await self._start_regime_detection()
+
         self._started = True
         logger.info("=" * 60)
-        logger.info("Stock Pulse Brain READY — Phase 1+2 Active")
+        logger.info("Stock Pulse Brain READY — Phase 1+2+3 Active")
         logger.info("  Ingestion Pipeline: %s", "✅" if self.kafka_bridge else "❌")
         logger.info("  Feature Pipeline: %s", "✅" if self.feature_pipeline else "❌")
         logger.info("  Feature Store:    %s", "✅" if self.feature_store else "❌")
@@ -138,6 +155,9 @@ class BrainEngine:
         logger.info("  Model Manager:    %s", "✅" if self.model_manager else "❌")
         logger.info("  Signal Pipeline:  %s", "✅" if self.signal_fusion else "❌")
         logger.info("  Backtest Engine:  %s", "✅" if self.backtest_engine else "❌")
+        logger.info("  Regime Detection: %s", "✅" if self.hmm_detector else "❌")
+        logger.info("  Regime Router:    %s", "✅" if self.regime_router else "❌")
+        logger.info("  Position Sizer:   %s", "✅" if self.position_sizer else "❌")
         logger.info("=" * 60)
 
     async def stop(self):
@@ -205,9 +225,10 @@ class BrainEngine:
             # Use MongoDB-backed fetchers if db is available, else YFinance direct
             if self._db is not None:
                 fetchers = MongoDataFetchers(self._db)
+                eb = get_event_bus()
                 self.feature_pipeline = FeaturePipeline(
                     config=self.config,
-                    event_bus=get_event_bus() if get_event_bus().is_running else None,
+                    event_bus=eb if eb and eb.is_running else None,
                     price_fetcher=fetchers.fetch_price_data,
                     fundamental_fetcher=fetchers.fetch_fundamental_data,
                     macro_fetcher=fetchers.fetch_macro_data,
@@ -416,6 +437,359 @@ class BrainEngine:
         except Exception:
             logger.exception("⚠️ Backtest Engine: FAILED to initialize")
             self.backtest_engine = None
+
+    # -----------------------------------------------------------------------
+    # Phase 3: Regime Detection
+    # -----------------------------------------------------------------------
+
+    async def _start_regime_detection(self):
+        """Initialize HMM regime detection, complementary detectors, router, and position sizer."""
+        try:
+            from brain.regime import (
+                HMMRegimeDetector,
+                KMeansRegimeDetector,
+                GMMRegimeDetector,
+                CUSUMDetector,
+                RegimeRouter,
+                PositionSizer,
+                RegimeStore,
+            )
+            from brain.models.events import MarketRegime
+
+            # Initialize all detectors
+            self.hmm_detector = HMMRegimeDetector(config=self.config.regime)
+            self.kmeans_detector = KMeansRegimeDetector(n_clusters=3)
+            self.gmm_detector = GMMRegimeDetector(n_components=3)
+            self.cusum_detector = CUSUMDetector(
+                window_size=50, threshold_multiplier=4.0, drift=0.5
+            )
+
+            # Initialize regime router (with model_manager if available)
+            self.regime_router = RegimeRouter(model_manager=self.model_manager)
+
+            # Initialize position sizer
+            self.position_sizer = PositionSizer(risk_config=self.config.risk)
+
+            # Initialize regime store (Redis if available, otherwise in-memory)
+            self.regime_store = RegimeStore(cache_service=None, ts_store=None)
+
+            # Default regime
+            self._current_regime = MarketRegime.SIDEWAYS
+            self._regime_probabilities = {
+                "bull_prob": 0.33, "bear_prob": 0.33, "sideways_prob": 0.34
+            }
+
+            # Attempt auto-training from historical data
+            await self._auto_train_regime_detectors()
+
+            logger.info("Phase 3 Regime Detection: READY")
+
+        except Exception:
+            logger.exception("Phase 3 Regime Detection: FAILED to initialize")
+            self.hmm_detector = None
+            self.regime_router = None
+            self.position_sizer = None
+
+    async def _auto_train_regime_detectors(self):
+        """Auto-train regime detectors on startup if historical data is available."""
+        try:
+            features = await self._build_regime_features()
+            if features is None or len(features) < 100:
+                logger.info("Insufficient data for regime training (%d rows), using rule-based fallback",
+                            len(features) if features is not None else 0)
+                return
+
+            # Train HMM
+            self.hmm_detector.train(features)
+            logger.info("HMM detector trained on %d observations", len(features))
+
+            # Train K-Means and GMM
+            if self.kmeans_detector and self.kmeans_detector.is_available:
+                self.kmeans_detector.train(features)
+                logger.info("K-Means detector trained")
+
+            if self.gmm_detector and self.gmm_detector.is_available:
+                self.gmm_detector.train(features)
+                logger.info("GMM detector trained")
+
+            # Run initial prediction
+            regime, probs = self.hmm_detector.predict_regime(features)
+            self._current_regime = regime
+            self._regime_probabilities = probs
+            self._regime_last_trained = datetime.now(IST)
+            self._stats["regime_retrains"] += 1
+
+            # Set CUSUM baseline regime
+            self.cusum_detector.set_current_regime(regime)
+
+            logger.info("Initial regime detected: %s (probs: %s)", regime.value, probs)
+
+            # Publish regime event
+            await self._publish_regime_event(regime, probs)
+
+        except Exception:
+            logger.exception("Auto-train regime detectors failed, using rule-based fallback")
+
+    async def _build_regime_features(self):
+        """Build feature matrix for regime detection from historical data."""
+        import numpy as np
+
+        try:
+            from brain.features.data_fetchers import (
+                fetch_price_data_yfinance,
+                fetch_macro_data_yfinance,
+            )
+
+            # Use NIFTY 50 as the market proxy
+            lookback_days = self.config.regime.lookback_years * 365
+            price_df = await fetch_price_data_yfinance("^NSEI", days=lookback_days)
+
+            if price_df is None or price_df.empty or len(price_df) < 100:
+                logger.warning("Insufficient NIFTY 50 price data for regime training")
+                return None
+
+            # Compute features
+            close = price_df["close"].values.astype(float)
+
+            # 1. Daily returns
+            daily_returns = np.diff(close) / close[:-1]
+
+            # 2. Rolling 20-day volatility
+            rolling_vol = np.array([
+                np.std(daily_returns[max(0, i - 19):i + 1])
+                for i in range(len(daily_returns))
+            ])
+
+            # 3. Fetch macro data (VIX, INR/USD)
+            macro = await fetch_macro_data_yfinance()
+            vix_value = macro.get("india_vix", 15.0)
+            inr_usd_value = macro.get("inr_usd", 0.012)
+
+            # Create constant columns for VIX and INR/USD (latest values)
+            # In production these would be time-series; for training we use
+            # rolling approximations
+            n = len(daily_returns)
+            vix_col = np.full(n, vix_value)
+            inr_usd_col = np.full(n, inr_usd_value)
+
+            # 4. FII/DII flow momentum (from MongoDB if available, else zeros)
+            fii_dii_col = np.zeros(n)
+            if self._db is not None:
+                try:
+                    fii_dii_collection = self._db.get_collection("fii_dii_flows")
+                    cursor = fii_dii_collection.find().sort("date", -1).limit(n)
+                    flows = []
+                    async for doc in cursor:
+                        net_flow = doc.get("fii_net", 0.0) + doc.get("dii_net", 0.0)
+                        flows.append(net_flow)
+                    if flows:
+                        flows = list(reversed(flows))
+                        # Pad or truncate to match
+                        pad_len = n - len(flows)
+                        if pad_len > 0:
+                            flows = [0.0] * pad_len + flows
+                        fii_dii_col = np.array(flows[:n])
+                except Exception:
+                    logger.debug("FII/DII data not available from MongoDB, using zeros")
+
+            # Stack features: (n_samples, 5)
+            features = np.column_stack([
+                daily_returns,
+                rolling_vol,
+                vix_col,
+                fii_dii_col,
+                inr_usd_col,
+            ])
+
+            # Remove any rows with NaN/Inf
+            valid_mask = np.all(np.isfinite(features), axis=1)
+            features = features[valid_mask]
+
+            logger.info("Built regime feature matrix: shape=%s", features.shape)
+            return features
+
+        except Exception:
+            logger.exception("Failed to build regime features")
+            return None
+
+    async def _publish_regime_event(self, regime, probabilities):
+        """Publish a regime change event to the event bus."""
+        try:
+            from brain.event_bus import get_event_bus
+            from brain.models.events import BrainEvent, EventType
+
+            eb = get_event_bus()
+            if eb and eb.is_running:
+                event = BrainEvent(
+                    event_type=EventType.REGIME_CHANGED,
+                    source="regime.hmm_detector",
+                    payload={
+                        "regime": regime.value,
+                        "probabilities": probabilities,
+                    },
+                )
+                await eb.publish("regime.changed", event)
+        except Exception:
+            logger.debug("Could not publish regime event (event bus not available)")
+
+    async def detect_regime(self, force_retrain: bool = False) -> Dict[str, Any]:
+        """
+        Run regime detection. Retrains if stale or forced.
+
+        Returns dict with current regime, probabilities, and detector consensus.
+        """
+        if not self.hmm_detector:
+            return {"error": "Regime detection not initialized"}
+
+        from brain.models.events import MarketRegime
+
+        # Check if retrain needed
+        needs_retrain = force_retrain
+        if self._regime_last_trained:
+            days_since = (datetime.now(IST) - self._regime_last_trained).days
+            if days_since >= self.config.regime.retrain_frequency_days:
+                needs_retrain = True
+                logger.info("Regime model stale (%d days), retraining", days_since)
+
+        if needs_retrain:
+            await self._auto_train_regime_detectors()
+
+        # Build current features for prediction
+        features = await self._build_regime_features()
+        if features is None or len(features) < 10:
+            return {
+                "regime": self._current_regime.value if self._current_regime else "sideways",
+                "probabilities": self._regime_probabilities,
+                "source": "cached",
+                "message": "Using cached regime (insufficient data for fresh detection)",
+            }
+
+        # Get predictions from all detectors
+        hmm_regime, hmm_probs = self.hmm_detector.predict_regime(features)
+
+        kmeans_regime = MarketRegime.SIDEWAYS
+        gmm_regime = MarketRegime.SIDEWAYS
+        gmm_probs = {}
+
+        if self.kmeans_detector and self.kmeans_detector.is_trained:
+            kmeans_regime, _ = self.kmeans_detector.predict_regime(features)
+
+        if self.gmm_detector and self.gmm_detector.is_trained:
+            gmm_regime, gmm_probs = self.gmm_detector.predict_regime(features)
+
+        # CUSUM: update with latest data point
+        cusum_change = False
+        cusum_type = None
+        if self.cusum_detector and len(features) > 0:
+            last_return = float(features[-1, 0])
+            last_vol = float(features[-1, 1])
+            cusum_change, cusum_type = self.cusum_detector.update(last_return, last_vol)
+            if cusum_change:
+                cusum_suggested = self.cusum_detector.suggest_regime(cusum_type)
+                logger.info("CUSUM detected change: %s -> suggested %s", cusum_type, cusum_suggested.value)
+
+        # Ensemble consensus: majority vote
+        votes = [hmm_regime, kmeans_regime, gmm_regime]
+        regime_counts = {}
+        for v in votes:
+            regime_counts[v] = regime_counts.get(v, 0) + 1
+        consensus_regime = max(regime_counts, key=regime_counts.get)
+        consensus_strength = regime_counts[consensus_regime] / len(votes)
+
+        # Update current regime if consensus is strong or HMM agrees
+        previous_regime = self._current_regime
+        if consensus_strength >= 0.67 or consensus_regime == hmm_regime:
+            self._current_regime = consensus_regime
+            self._regime_probabilities = hmm_probs
+
+        # Update CUSUM tracker
+        if self.cusum_detector:
+            self.cusum_detector.set_current_regime(self._current_regime)
+
+        self._stats["regime_detections"] += 1
+
+        # Publish event if regime changed
+        if self._current_regime != previous_regime:
+            logger.info("Regime change: %s -> %s", previous_regime.value, self._current_regime.value)
+            await self._publish_regime_event(self._current_regime, hmm_probs)
+
+        # Get transition matrix
+        transition_matrix = None
+        try:
+            tm = self.hmm_detector.get_transition_matrix()
+            transition_matrix = tm.tolist()
+        except Exception:
+            pass
+
+        return {
+            "regime": self._current_regime.value,
+            "probabilities": hmm_probs,
+            "consensus": {
+                "regime": consensus_regime.value,
+                "strength": round(consensus_strength, 2),
+                "votes": {r.value: c for r, c in regime_counts.items()},
+            },
+            "detectors": {
+                "hmm": {"regime": hmm_regime.value, "probabilities": hmm_probs},
+                "kmeans": {"regime": kmeans_regime.value},
+                "gmm": {"regime": gmm_regime.value, "probabilities": gmm_probs},
+                "cusum": {
+                    "change_detected": cusum_change,
+                    "change_type": cusum_type,
+                    "statistics": self.cusum_detector.get_statistics() if self.cusum_detector else {},
+                },
+            },
+            "transition_matrix": transition_matrix,
+            "last_trained": self._regime_last_trained.isoformat() if self._regime_last_trained else None,
+            "source": "live",
+        }
+
+    async def get_regime_status(self) -> Dict[str, Any]:
+        """Get current regime status without recomputing."""
+        return {
+            "regime": self._current_regime.value if self._current_regime else "unknown",
+            "probabilities": self._regime_probabilities,
+            "last_trained": self._regime_last_trained.isoformat() if self._regime_last_trained else None,
+            "position_sizer": self.position_sizer.get_current_state() if self.position_sizer else None,
+            "cusum": self.cusum_detector.get_statistics() if self.cusum_detector else None,
+            "stats": {
+                "regime_detections": self._stats.get("regime_detections", 0),
+                "regime_retrains": self._stats.get("regime_retrains", 0),
+            },
+        }
+
+    async def calculate_position_size(
+        self,
+        signal_confidence: float,
+        win_rate: float,
+        risk_reward_ratio: float,
+        entry_price: float,
+        stop_loss: float,
+        timeframe: str = "swing",
+    ) -> Dict[str, Any]:
+        """Calculate position size using Kelly Criterion with regime awareness."""
+        if not self.position_sizer:
+            return {"error": "Position sizer not initialized"}
+
+        from brain.models.events import MarketRegime, SignalTimeframe
+
+        # Map timeframe string to enum
+        tf_map = {
+            "intraday": SignalTimeframe.INTRADAY,
+            "swing": SignalTimeframe.SWING,
+            "positional": SignalTimeframe.POSITIONAL,
+        }
+        tf = tf_map.get(timeframe, SignalTimeframe.SWING)
+
+        return self.position_sizer.calculate_position_size(
+            signal_confidence=signal_confidence,
+            win_rate=win_rate,
+            risk_reward_ratio=risk_reward_ratio,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            regime=self._current_regime,
+            timeframe=tf,
+        )
 
     # -----------------------------------------------------------------------
     # Kafka (original)
@@ -834,6 +1208,26 @@ class BrainEngine:
             }
         else:
             health["subsystems"]["backtest_engine"] = {"status": "not_initialized"}
+
+        # Phase 3: Regime Detection
+        if self.hmm_detector:
+            health["subsystems"]["regime_detection"] = {
+                "status": "healthy",
+                "current_regime": self._current_regime.value if self._current_regime else "unknown",
+                "last_trained": self._regime_last_trained.isoformat() if self._regime_last_trained else None,
+                "detectors": ["hmm", "kmeans", "gmm", "cusum"],
+            }
+        else:
+            health["subsystems"]["regime_detection"] = {"status": "not_initialized"}
+
+        # Phase 3: Position Sizer
+        if self.position_sizer:
+            health["subsystems"]["position_sizer"] = {
+                "status": "healthy",
+                "state": self.position_sizer.get_current_state(),
+            }
+        else:
+            health["subsystems"]["position_sizer"] = {"status": "not_initialized"}
 
         # Overall status
         initialized_count = sum(

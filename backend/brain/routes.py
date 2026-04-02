@@ -645,3 +645,177 @@ async def phase2_summary():
             "GET  /api/brain/phase2/summary",
         ],
     }
+
+
+# ===========================================================================
+# Phase 3: Market Regime Detection & Risk Management
+# ===========================================================================
+
+
+class PositionSizeRequest(BaseModel):
+    signal_confidence: float = 70.0
+    win_rate: float = 0.55
+    risk_reward_ratio: float = 2.0
+    entry_price: float
+    stop_loss: float
+    timeframe: str = "swing"
+
+
+# ---------------------------------------------------------------------------
+# Market Regime
+# ---------------------------------------------------------------------------
+
+@router.get("/market-regime")
+async def get_market_regime(
+    detect: bool = Query(False, description="Run fresh detection (otherwise returns cached)"),
+):
+    """
+    Get current market regime (bull/bear/sideways).
+
+    Returns regime state, probabilities, and multi-detector consensus.
+    Use ?detect=true to trigger a fresh detection pass.
+    """
+    if detect:
+        try:
+            result = await brain_engine.detect_regime()
+            if "error" in result:
+                raise HTTPException(status_code=503, detail=result["error"])
+            return result
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("Error detecting market regime")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # Return cached regime status
+    return await brain_engine.get_regime_status()
+
+
+@router.post("/market-regime/detect")
+async def detect_market_regime(force_retrain: bool = Query(False)):
+    """
+    Trigger market regime detection with optional model retraining.
+
+    Args:
+        force_retrain: Force HMM/K-Means/GMM retraining even if not stale
+    """
+    if not brain_engine.hmm_detector:
+        raise HTTPException(status_code=503, detail="Regime detection not initialized")
+
+    try:
+        result = await brain_engine.detect_regime(force_retrain=force_retrain)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error in regime detection")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/market-regime/history")
+async def regime_history(days: int = Query(90, ge=1, le=365)):
+    """Get regime history from the regime store."""
+    if not brain_engine.regime_store:
+        return {"history": [], "message": "Regime store not initialized"}
+
+    history = await brain_engine.regime_store.get_history(days=days)
+    return {
+        "days_requested": days,
+        "entries": len(history),
+        "history": history,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Position Sizing
+# ---------------------------------------------------------------------------
+
+@router.post("/position-size/calculate")
+async def calculate_position_size(request: PositionSizeRequest):
+    """
+    Calculate regime-aware position size using Kelly Criterion.
+
+    Takes into account current market regime, drawdown rules,
+    and signal confidence to determine optimal position sizing.
+    """
+    if not brain_engine.position_sizer:
+        raise HTTPException(status_code=503, detail="Position sizer not initialized")
+
+    try:
+        result = await brain_engine.calculate_position_size(
+            signal_confidence=request.signal_confidence,
+            win_rate=request.win_rate,
+            risk_reward_ratio=request.risk_reward_ratio,
+            entry_price=request.entry_price,
+            stop_loss=request.stop_loss,
+            timeframe=request.timeframe,
+        )
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error calculating position size")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/position-size/state")
+async def position_sizer_state():
+    """Get current position sizer state (drawdown flags, Kelly fractions)."""
+    if not brain_engine.position_sizer:
+        return {"status": "not_initialized"}
+    return brain_engine.position_sizer.get_current_state()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Summary
+# ---------------------------------------------------------------------------
+
+@router.get("/phase3/summary")
+async def phase3_summary():
+    """Get Phase 3.1 implementation summary."""
+    return {
+        "phase": "Phase 3.1: HMM Market Regime Detection",
+        "status": "active" if brain_engine.hmm_detector else "not_initialized",
+        "components": {
+            "hmm_detector": {
+                "status": "ready" if brain_engine.hmm_detector else "not_initialized",
+                "description": "3-state Gaussian HMM (bull/bear/sideways)",
+            },
+            "kmeans_detector": {
+                "status": "ready" if (brain_engine.kmeans_detector and brain_engine.kmeans_detector.is_available) else "not_available",
+                "description": "K-Means hard clustering regime detector",
+            },
+            "gmm_detector": {
+                "status": "ready" if (brain_engine.gmm_detector and brain_engine.gmm_detector.is_available) else "not_available",
+                "description": "GMM soft clustering with probabilities",
+            },
+            "cusum_detector": {
+                "status": "ready" if brain_engine.cusum_detector else "not_initialized",
+                "description": "CUSUM change-point detection for real-time regime shifts",
+            },
+            "regime_router": {
+                "status": "ready" if brain_engine.regime_router else "not_initialized",
+                "description": "Routes model predictions by regime (bull: XGB 50%, bear: GARCH 55%)",
+                "stats": brain_engine.regime_router.get_stats() if brain_engine.regime_router else {},
+            },
+            "position_sizer": {
+                "status": "ready" if brain_engine.position_sizer else "not_initialized",
+                "description": "Kelly Criterion with ATR stops and drawdown escalation",
+                "state": brain_engine.position_sizer.get_current_state() if brain_engine.position_sizer else {},
+            },
+        },
+        "current_regime": brain_engine._current_regime.value if brain_engine._current_regime else "unknown",
+        "api_endpoints": [
+            "GET  /api/brain/market-regime",
+            "GET  /api/brain/market-regime?detect=true",
+            "POST /api/brain/market-regime/detect",
+            "GET  /api/brain/market-regime/history",
+            "POST /api/brain/position-size/calculate",
+            "GET  /api/brain/position-size/state",
+            "GET  /api/brain/phase3/summary",
+        ],
+    }
