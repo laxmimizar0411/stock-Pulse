@@ -83,7 +83,6 @@ class SignalFusionEngine:
             "fundamental": weights["fundamental"],
             "volume": weights["volume"],
             "macro": weights["macro"],
-            "ml_model": weights.get("ml_model", 0.25),
         }
 
         for source, weight in source_weight_map.items():
@@ -143,6 +142,12 @@ class SignalFusionEngine:
             symbol, direction, confidence, contributing_factors, regime
         )
 
+        # Swing-specific fields
+        expected_hold_days = self._calculate_expected_hold_days(
+            raw_signals, current_price, timeframe
+        )
+        swing_phase = self._determine_swing_phase(raw_signals)
+
         signal = SignalEvent(
             symbol=symbol,
             company=stock_info.get("name", ""),
@@ -158,6 +163,8 @@ class SignalFusionEngine:
             contributing_factors=contributing_factors,
             explanation=explanation,
             regime_at_signal=regime,
+            expected_hold_days=expected_hold_days,
+            swing_phase=swing_phase,
         )
 
         # Store as active signal
@@ -175,7 +182,6 @@ class SignalFusionEngine:
             "fundamental": cfg.fundamental,
             "volume": cfg.volume,
             "macro": cfg.macro,
-            "ml_model": getattr(cfg, 'ml_model', 0.25),
         }
 
         if regime == MarketRegime.BULL:
@@ -367,6 +373,116 @@ class SignalFusionEngine:
 
         return " ".join(parts)
 
+    def _calculate_expected_hold_days(
+        self,
+        signals: List[RawSignal],
+        current_price: float,
+        timeframe: SignalTimeframe,
+    ) -> int:
+        """
+        Calculate expected hold days based on ATR and timeframe.
+        
+        Logic:
+        - Extract ATR from technical signals
+        - Use ATR as proxy for volatility
+        - Lower volatility (small ATR) = longer hold
+        - Higher volatility (large ATR) = shorter hold
+        - Timeframe provides baseline range
+        """
+        # Get ATR from technical signals
+        tech_sig = next((s for s in signals if s.source == "technical"), None)
+        atr = None
+        if tech_sig and tech_sig.details:
+            atr = tech_sig.details.get("atr_14") or tech_sig.details.get("atr")
+        
+        # Fallback to 2% of price if no ATR
+        if atr is None or atr <= 0 or current_price <= 0:
+            # Default by timeframe
+            if timeframe == SignalTimeframe.INTRADAY:
+                return 1
+            elif timeframe == SignalTimeframe.SWING:
+                return 5
+            elif timeframe == SignalTimeframe.POSITIONAL:
+                return 21
+            else:  # INVESTMENT
+                return 90
+        
+        # Calculate volatility percentage
+        volatility_pct = (atr / current_price) * 100 if current_price > 0 else 2.0
+        
+        # Swing hold days inversely proportional to volatility
+        # High volatility (>3%) = shorter hold (3-5 days)
+        # Medium volatility (1.5-3%) = medium hold (5-7 days)
+        # Low volatility (<1.5%) = longer hold (7-10 days)
+        if timeframe == SignalTimeframe.SWING:
+            if volatility_pct > 3.0:
+                return 3
+            elif volatility_pct > 2.0:
+                return 5
+            elif volatility_pct > 1.5:
+                return 7
+            else:
+                return 10
+        elif timeframe == SignalTimeframe.INTRADAY:
+            return 1
+        elif timeframe == SignalTimeframe.POSITIONAL:
+            return int(21 / max(volatility_pct / 2.0, 0.5))  # 14-28 days range
+        else:  # INVESTMENT
+            return 90
+
+    def _determine_swing_phase(self, signals: List[RawSignal]) -> str:
+        """
+        Determine swing phase based on features.
+        
+        Phases:
+        - accumulation: price consolidating, volume declining, momentum flat
+        - markup: price rising, volume rising, momentum positive
+        - distribution: price consolidating high, volume declining, momentum weakening
+        - markdown: price falling, volume rising, momentum negative
+        """
+        # Extract relevant features from technical signals
+        tech_sig = next((s for s in signals if s.source == "technical"), None)
+        volume_sig = next((s for s in signals if s.source == "volume"), None)
+        
+        if not tech_sig or not tech_sig.details:
+            return "accumulation"  # Default
+        
+        details = tech_sig.details
+        
+        # Extract key indicators
+        rsi = details.get("rsi_14", 50.0)
+        macd_signal = details.get("macd_signal", 0.0)  # Positive = bullish, negative = bearish
+        adx = details.get("adx_14", 20.0)  # Trend strength
+        
+        volume_score = volume_sig.score if volume_sig else 0.0
+        price_momentum = tech_sig.score  # Overall technical score
+        
+        # Phase determination logic
+        is_trending_up = price_momentum > 0.2 and macd_signal > 0
+        is_trending_down = price_momentum < -0.2 and macd_signal < 0
+        is_consolidating = abs(price_momentum) < 0.2 or adx < 25
+        
+        volume_rising = volume_score > 0.3
+        volume_declining = volume_score < -0.1
+        
+        # Decision tree
+        if is_consolidating and rsi < 45 and volume_declining:
+            return "accumulation"
+        elif is_trending_up and volume_rising and rsi < 70:
+            return "markup"
+        elif is_consolidating and rsi > 55 and volume_declining:
+            return "distribution"
+        elif is_trending_down and (volume_rising or rsi < 40):
+            return "markdown"
+        else:
+            # Default based on RSI
+            if rsi < 40:
+                return "accumulation"
+            elif rsi > 60:
+                return "distribution"
+            else:
+                return "markup" if price_momentum > 0 else "accumulation"
+
     def get_signal(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get the latest signal for a symbol."""
         signal = self._active_signals.get(symbol)
@@ -411,6 +527,8 @@ class SignalFusionEngine:
             "stop_loss": signal.stop_loss,
             "risk_reward_ratio": signal.risk_reward_ratio,
             "risk_level": signal.risk_level.value,
+            "expected_hold_days": signal.expected_hold_days,
+            "swing_phase": signal.swing_phase,
             "contributing_factors": [
                 {
                     "name": f.name,

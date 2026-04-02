@@ -29,12 +29,11 @@ def _env_bool(key: str, default: bool) -> bool:
 @dataclass
 class SignalFusionWeights:
     """Weights for multi-signal fusion. Must sum to 1.0."""
-    technical: float = 0.25
-    sentiment: float = 0.15
-    fundamental: float = 0.15
-    volume: float = 0.10
+    technical: float = 0.35
+    sentiment: float = 0.20
+    fundamental: float = 0.20
+    volume: float = 0.15
     macro: float = 0.10
-    ml_model: float = 0.25
 
 
 @dataclass
@@ -127,10 +126,6 @@ class LLMSettings:
     # Tier 2 — Quick thinking
     tier2_provider: str = os.getenv("LLM_TIER2_PROVIDER", "openai")
     tier2_model: str = os.getenv("LLM_TIER2_MODEL", "gpt-4.1-mini")
-
-    # Tier 3 — Local / open-source
-    tier3_provider: str = os.getenv("LLM_TIER3_PROVIDER", "local")
-    tier3_model: str = os.getenv("LLM_TIER3_MODEL", "finbert")
 
     # Cost controls
     max_monthly_spend_usd: float = float(os.getenv("LLM_MAX_MONTHLY_SPEND", "5000"))
@@ -225,8 +220,8 @@ class BrainConfig:
         config = cls()
 
         # Override fusion weights from env
-        config.fusion_weights.technical = _env_float("FUSION_TECHNICAL_WEIGHT", 0.30)
-        config.fusion_weights.sentiment = _env_float("FUSION_SENTIMENT_WEIGHT", 0.25)
+        config.fusion_weights.technical = _env_float("FUSION_TECHNICAL_WEIGHT", 0.35)
+        config.fusion_weights.sentiment = _env_float("FUSION_SENTIMENT_WEIGHT", 0.20)
         config.fusion_weights.fundamental = _env_float("FUSION_FUNDAMENTAL_WEIGHT", 0.20)
         config.fusion_weights.volume = _env_float("FUSION_VOLUME_WEIGHT", 0.15)
         config.fusion_weights.macro = _env_float("FUSION_MACRO_WEIGHT", 0.10)

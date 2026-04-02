@@ -55,6 +55,8 @@ class BrainEngine:
         self.batch_scheduler = None
         self.minio_client = None
         self.data_quality = None
+        self.normalizer = None
+        self.kafka_bridge = None
 
         # Phase 2 subsystems
         self.model_manager = None
@@ -96,33 +98,37 @@ class BrainEngine:
         # 1. Start Kafka event bus
         await self._start_kafka()
 
-        # 2. Initialize Feature Pipeline (Phase 1)
+        # 2. Initialize Ingestion Pipeline (Normalizer + Kafka Bridge)
+        await self._start_ingestion_pipeline()
+
+        # 3. Initialize Feature Pipeline (Phase 1)
         await self._start_feature_pipeline()
 
-        # 3. Initialize Feature Store (Phase 1)
+        # 4. Initialize Feature Store (Phase 1)
         await self._start_feature_store()
 
-        # 4. Initialize Batch Scheduler (Phase 1)
+        # 5. Initialize Batch Scheduler (Phase 1)
         await self._start_batch_scheduler()
 
-        # 5. Initialize Storage Layer (Phase 1)
+        # 6. Initialize Storage Layer (Phase 1)
         await self._start_storage()
 
-        # 6. Initialize Data Quality (Phase 1)
+        # 7. Initialize Data Quality (Phase 1)
         await self._start_data_quality()
 
-        # 7. Initialize Model Manager (Phase 2)
+        # 8. Initialize Model Manager (Phase 2)
         await self._start_model_manager()
 
-        # 8. Initialize Signal Pipeline (Phase 2)
+        # 9. Initialize Signal Pipeline (Phase 2)
         await self._start_signal_pipeline()
 
-        # 9. Initialize Backtest Engine (Phase 2)
+        # 10. Initialize Backtest Engine (Phase 2)
         await self._start_backtest_engine()
 
         self._started = True
         logger.info("=" * 60)
         logger.info("Stock Pulse Brain READY — Phase 1+2 Active")
+        logger.info("  Ingestion Pipeline: %s", "✅" if self.kafka_bridge else "❌")
         logger.info("  Feature Pipeline: %s", "✅" if self.feature_pipeline else "❌")
         logger.info("  Feature Store:    %s", "✅" if self.feature_store else "❌")
         logger.info("  Batch Scheduler:  %s", "✅" if self.batch_scheduler else "❌")
@@ -150,6 +156,34 @@ class BrainEngine:
 
         self._started = False
         logger.info("Stock Pulse Brain stopped")
+
+    # -----------------------------------------------------------------------
+    # Phase 1: Ingestion Pipeline (Normalizer + Kafka Bridge)
+    # -----------------------------------------------------------------------
+
+    async def _start_ingestion_pipeline(self):
+        """Initialize the data ingestion pipeline with Normalizer and KafkaBridge."""
+        try:
+            from brain.ingestion.normalizer import DataNormalizer
+            from brain.ingestion.kafka_bridge import KafkaBridge
+
+            # Initialize Normalizer
+            self.normalizer = DataNormalizer()
+            logger.info("✅ Normalizer: READY")
+
+            # Initialize Kafka Bridge
+            # Pass KafkaManager if available, else standalone mode
+            self.kafka_bridge = KafkaBridge(kafka_manager=self.kafka)
+            
+            if self.kafka and self.kafka._connected:
+                logger.info("✅ Kafka Bridge: READY (connected to Kafka)")
+            else:
+                logger.info("✅ Kafka Bridge: READY (standalone mode, no Kafka)")
+
+        except Exception:
+            logger.exception("⚠️ Ingestion Pipeline: FAILED to initialize")
+            self.normalizer = None
+            self.kafka_bridge = None
 
     # -----------------------------------------------------------------------
     # Phase 1: Feature Pipeline
@@ -423,21 +457,9 @@ class BrainEngine:
         # Sanitize features: replace NaN/Infinity with None for JSON serialization
         features = _sanitize_features(features)
 
-        # Store in MongoDB if available
-        if self._db is not None and features:
-            try:
-                await self._db["brain_features"].update_one(
-                    {"symbol": symbol.upper()},
-                    {"$set": {
-                        "symbol": symbol.upper(),
-                        "features": features,
-                        "feature_count": len(features),
-                        "computed_at": datetime.now(IST).isoformat(),
-                    }},
-                    upsert=True,
-                )
-            except Exception:
-                logger.exception("Error storing features for %s in MongoDB", symbol)
+        # Store in MongoDB via FeatureStore abstraction
+        if self.feature_store and self._db is not None and features:
+            await self.feature_store.store_features(symbol, features, db=self._db)
 
         return features
 
@@ -452,42 +474,25 @@ class BrainEngine:
         # Sanitize all results
         results = {sym: _sanitize_features(f) if f else {} for sym, f in results.items()}
 
-        # Store all in MongoDB
-        if self._db is not None:
+        # Store all in MongoDB via FeatureStore abstraction
+        if self.feature_store and self._db is not None:
             for symbol, features in results.items():
                 if features:
-                    try:
-                        await self._db["brain_features"].update_one(
-                            {"symbol": symbol.upper()},
-                            {"$set": {
-                                "symbol": symbol.upper(),
-                                "features": features,
-                                "feature_count": len(features),
-                                "computed_at": datetime.now(IST).isoformat(),
-                            }},
-                            upsert=True,
-                        )
-                    except Exception:
-                        pass
+                    await self.feature_store.store_features(symbol, features, db=self._db)
 
         return results
 
     async def get_stored_features(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get previously computed features from MongoDB."""
-        if self._db is None:
-            # Try pipeline cache
-            if self.feature_pipeline:
-                return self.feature_pipeline.get_latest_features(symbol)
-            return None
-
-        try:
-            doc = await self._db["brain_features"].find_one(
-                {"symbol": symbol.upper()},
-                {"_id": 0},
-            )
-            return doc
-        except Exception:
-            return None
+        # Try FeatureStore abstraction first
+        if self.feature_store and self._db is not None:
+            return await self.feature_store.get_features(symbol, db=self._db)
+        
+        # Fallback to pipeline cache if no DB
+        if self.feature_pipeline:
+            return self.feature_pipeline.get_latest_features(symbol)
+        
+        return None
 
     async def run_data_quality_check(self, symbol: str, price_data=None) -> Dict[str, Any]:
         """Run data quality checks on a symbol's data."""
@@ -687,6 +692,8 @@ class BrainEngine:
             "stop_loss": signal_event.stop_loss,
             "risk_reward_ratio": signal_event.risk_reward_ratio,
             "risk_level": signal_event.risk_level.value if hasattr(signal_event.risk_level, 'value') else str(signal_event.risk_level),
+            "expected_hold_days": signal_event.expected_hold_days,
+            "swing_phase": signal_event.swing_phase,
             "contributing_factors": [
                 {"name": f.name, "score": f.score, "weight": f.weight, "description": f.description}
                 for f in (signal_event.contributing_factors or [])

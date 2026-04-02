@@ -361,3 +361,78 @@ class FeatureStore:
             "is_market_hours": _is_market_hours(),
             "version": FEATURE_VERSION,
         }
+
+    # -----------------------------------------------------------------------
+    # MongoDB Persistence Layer (for Engine abstraction)
+    # -----------------------------------------------------------------------
+
+    async def store_features(
+        self,
+        symbol: str,
+        features: Dict[str, Any],
+        db=None,
+    ) -> bool:
+        """
+        Store computed features in MongoDB (abstraction for engine.py).
+        
+        This method provides a clean interface for the Brain engine to persist
+        features without directly accessing MongoDB collections.
+        
+        Args:
+            symbol: Stock symbol
+            features: Computed feature dictionary
+            db: MongoDB database instance (required)
+            
+        Returns:
+            True if stored successfully, False otherwise
+        """
+        if db is None or not features:
+            return False
+        
+        try:
+            await db["brain_features"].update_one(
+                {"symbol": symbol.upper()},
+                {"$set": {
+                    "symbol": symbol.upper(),
+                    "features": features,
+                    "feature_count": len(features),
+                    "computed_at": datetime.now(IST).isoformat(),
+                }},
+                upsert=True,
+            )
+            logger.debug("Stored %d features for %s", len(features), symbol)
+            return True
+        except Exception:
+            logger.exception("Error storing features for %s in MongoDB", symbol)
+            return False
+
+    async def get_features(
+        self,
+        symbol: str,
+        db=None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve stored features from MongoDB (abstraction for engine.py).
+        
+        This method provides a clean interface for the Brain engine to retrieve
+        features without directly accessing MongoDB collections.
+        
+        Args:
+            symbol: Stock symbol
+            db: MongoDB database instance (required)
+            
+        Returns:
+            Feature document dict, or None if not found
+        """
+        if db is None:
+            return None
+        
+        try:
+            doc = await db["brain_features"].find_one(
+                {"symbol": symbol.upper()},
+                {"_id": 0},
+            )
+            return doc
+        except Exception:
+            logger.exception("Error retrieving features for %s from MongoDB", symbol)
+            return None

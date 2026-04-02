@@ -136,6 +136,8 @@ class SignalEvent(BrainEvent):
     shap_features: Dict[str, float] = field(default_factory=dict)
     regime_at_signal: Optional[MarketRegime] = None
     model_version: str = ""
+    expected_hold_days: int = 5          # Swing-specific: calculated via ATR
+    swing_phase: str = "accumulation"    # Swing-specific: accumulation/markup/distribution/markdown
 
     def __post_init__(self):
         self.event_type = EventType.SIGNAL_GENERATED
