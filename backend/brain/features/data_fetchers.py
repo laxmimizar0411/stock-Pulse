@@ -221,20 +221,22 @@ async def fetch_macro_data_yfinance() -> Dict[str, Any]:
             "iip_growth": float(os.getenv("MACRO_IIP_GROWTH", "3.1")),
         }
 
-        # INR/USD from YFinance
+        # INR/USD from YFinance (USDINR=X, inverted to get INR/USD)
         try:
-            inr = yf.Ticker("INR=X")
-            inr_hist = inr.history(period="60d")
-            if inr_hist is not None and not inr_hist.empty:
-                closes = inr_hist["Close"].values
-                result["inr_usd_current"] = float(closes[-1])
+            usdinr = yf.Ticker("USDINR=X")
+            usdinr_hist = usdinr.history(period="60d")
+            if usdinr_hist is not None and not usdinr_hist.empty:
+                closes = usdinr_hist["Close"].values
+                # Invert USDINR to get INRUSD
+                result["inr_usd_current"] = 1.0 / float(closes[-1]) if closes[-1] != 0 else 0.012
                 if len(closes) >= 30:
-                    result["inr_usd_30d_ago"] = float(closes[-30])
+                    result["inr_usd_30d_ago"] = 1.0 / float(closes[-30]) if closes[-30] != 0 else 0.012
                 else:
-                    result["inr_usd_30d_ago"] = float(closes[0])
+                    result["inr_usd_30d_ago"] = 1.0 / float(closes[0]) if closes[0] != 0 else 0.012
         except Exception:
-            result["inr_usd_current"] = 83.5
-            result["inr_usd_30d_ago"] = 83.0
+            # Fallback: 1/83.5 ≈ 0.012 (1 INR = 0.012 USD)
+            result["inr_usd_current"] = 0.012
+            result["inr_usd_30d_ago"] = 0.012
 
         # Crude Oil
         try:
