@@ -243,9 +243,8 @@ class BrainEngine:
             self.feature_store = FeatureStore(
                 redis_client=None,  # No Redis available
                 pg_pool=None,       # No PostgreSQL available
+                mongo_db=self._db,  # Set MongoDB instance once
             )
-            # Inject MongoDB reference for fallback storage
-            self.feature_store._mongo_db = self._db
             logger.info("✅ Feature Store: READY (MongoDB fallback mode)")
 
         except Exception:
@@ -459,7 +458,7 @@ class BrainEngine:
 
         # Store in MongoDB via FeatureStore abstraction
         if self.feature_store and self._db is not None and features:
-            await self.feature_store.store_features(symbol, features, db=self._db)
+            await self.feature_store.store_features(symbol, features)
 
         return features
 
@@ -478,7 +477,7 @@ class BrainEngine:
         if self.feature_store and self._db is not None:
             for symbol, features in results.items():
                 if features:
-                    await self.feature_store.store_features(symbol, features, db=self._db)
+                    await self.feature_store.store_features(symbol, features)
 
         return results
 
@@ -486,7 +485,7 @@ class BrainEngine:
         """Get previously computed features from MongoDB."""
         # Try FeatureStore abstraction first
         if self.feature_store and self._db is not None:
-            return await self.feature_store.get_features(symbol, db=self._db)
+            return await self.feature_store.get_features(symbol)
         
         # Fallback to pipeline cache if no DB
         if self.feature_pipeline:

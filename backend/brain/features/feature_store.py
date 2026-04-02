@@ -69,6 +69,7 @@ class FeatureStore:
         pg_pool=None,
         market_hours_ttl: int = 5,
         post_market_ttl: int = 300,
+        mongo_db=None,
     ):
         """
         Args:
@@ -76,9 +77,11 @@ class FeatureStore:
             pg_pool: asyncpg connection pool (existing timeseries_store).
             market_hours_ttl: TTL in seconds during market hours (default: 5s).
             post_market_ttl: TTL in seconds outside market hours (default: 300s).
+            mongo_db: MongoDB database instance for feature persistence.
         """
         self.redis = redis_client
         self.pg = pg_pool
+        self.mongo_db = mongo_db
         self.market_hours_ttl = market_hours_ttl
         self.post_market_ttl = post_market_ttl
         self._stats = {
@@ -370,7 +373,6 @@ class FeatureStore:
         self,
         symbol: str,
         features: Dict[str, Any],
-        db=None,
     ) -> bool:
         """
         Store computed features in MongoDB (abstraction for engine.py).
@@ -381,16 +383,15 @@ class FeatureStore:
         Args:
             symbol: Stock symbol
             features: Computed feature dictionary
-            db: MongoDB database instance (required)
             
         Returns:
             True if stored successfully, False otherwise
         """
-        if db is None or not features:
+        if self.mongo_db is None or not features:
             return False
         
         try:
-            await db["brain_features"].update_one(
+            await self.mongo_db["brain_features"].update_one(
                 {"symbol": symbol.upper()},
                 {"$set": {
                     "symbol": symbol.upper(),
@@ -409,7 +410,6 @@ class FeatureStore:
     async def get_features(
         self,
         symbol: str,
-        db=None,
     ) -> Optional[Dict[str, Any]]:
         """
         Retrieve stored features from MongoDB (abstraction for engine.py).
@@ -419,16 +419,15 @@ class FeatureStore:
         
         Args:
             symbol: Stock symbol
-            db: MongoDB database instance (required)
             
         Returns:
             Feature document dict, or None if not found
         """
-        if db is None:
+        if self.mongo_db is None:
             return None
         
         try:
-            doc = await db["brain_features"].find_one(
+            doc = await self.mongo_db["brain_features"].find_one(
                 {"symbol": symbol.upper()},
                 {"_id": 0},
             )

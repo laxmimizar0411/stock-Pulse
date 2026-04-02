@@ -5,8 +5,8 @@ Combines multiple signal sources into a unified Brain signal
 with confidence scoring and regime-conditional weight adjustment.
 
 The fusion follows the Brain spec:
-- Technical: 30% (default)
-- Sentiment: 25%
+- Technical: 35% (default)
+- Sentiment: 20%
 - Fundamental: 20%
 - Volume: 15%
 - Macro: 10%

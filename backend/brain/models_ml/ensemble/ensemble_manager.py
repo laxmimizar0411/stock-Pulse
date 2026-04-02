@@ -19,16 +19,10 @@ Usage:
 import logging
 import numpy as np
 from typing import Any, Dict, List, Optional
-from enum import Enum
+
+from brain.models.events import MarketRegime
 
 logger = logging.getLogger("brain.models_ml.ensemble")
-
-
-class MarketRegime(str, Enum):
-    """Market regime enumeration."""
-    BULL = "bull"
-    BEAR = "bear"
-    SIDEWAYS = "sideways"
 
 
 class EnsembleManager:
