@@ -51,7 +51,7 @@ class RegimeConfig:
     n_states: int = 3              # bull, bear, sideways
     retrain_frequency_days: int = 7
     lookback_years: int = 2
-    features: tuple = ("daily_returns", "rolling_volatility_20d", "vix", "fii_dii_flow_momentum")
+    features: tuple = ("daily_returns", "rolling_volatility_20d", "vix", "fii_dii_flow_momentum", "inr_usd")
 
 
 @dataclass
