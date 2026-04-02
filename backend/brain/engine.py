@@ -11,6 +11,17 @@ Phase 1 subsystems:
     - Batch Scheduler (lightweight Airflow alternative)
     - Storage Layer (MinIO or local filesystem fallback)
     - Data Quality Engine
+
+Phase 2 subsystems:
+    - Model Manager (XGBoost, LightGBM, GARCH)
+    - Signal Pipeline (fusion + confidence scoring)
+    - Backtest Engine (vectorized with Indian cost model)
+
+Phase 3 subsystems:
+    - HMM Regime Detection (3-state: bull/bear/sideways)
+    - Complementary Detectors (K-Means, GMM, CUSUM)
+    - Regime Router (regime-conditional model weighting)
+    - Position Sizer (Kelly Criterion + drawdown escalation)
 """
 
 import asyncio
@@ -479,6 +490,16 @@ class BrainEngine:
                 "bull_prob": 0.33, "bear_prob": 0.33, "sideways_prob": 0.34
             }
 
+            # Try loading previously saved HMM model from disk
+            try:
+                import os
+                model_path = self._get_hmm_model_path()
+                if os.path.exists(model_path):
+                    self.hmm_detector.load(model_path)
+                    logger.info("HMM model loaded from disk: %s", model_path)
+            except Exception:
+                logger.debug("No saved HMM model found, will train from scratch")
+
             # Attempt auto-training from historical data
             await self._auto_train_regime_detectors()
 
@@ -487,8 +508,19 @@ class BrainEngine:
         except Exception:
             logger.exception("Phase 3 Regime Detection: FAILED to initialize")
             self.hmm_detector = None
+            self.kmeans_detector = None
+            self.gmm_detector = None
+            self.cusum_detector = None
             self.regime_router = None
             self.position_sizer = None
+            self.regime_store = None
+
+    def _get_hmm_model_path(self) -> str:
+        """Get filesystem path for persisted HMM model."""
+        import os
+        model_dir = os.path.join(os.path.dirname(__file__), "..", "data", "models", "regime")
+        os.makedirs(model_dir, exist_ok=True)
+        return os.path.join(model_dir, "hmm_detector.pkl")
 
     async def _auto_train_regime_detectors(self):
         """Auto-train regime detectors on startup if historical data is available."""
@@ -502,6 +534,12 @@ class BrainEngine:
             # Train HMM
             self.hmm_detector.train(features)
             logger.info("HMM detector trained on %d observations", len(features))
+
+            # Persist HMM model to disk
+            try:
+                self.hmm_detector.save(self._get_hmm_model_path())
+            except Exception:
+                logger.debug("Could not persist HMM model to disk")
 
             # Train K-Means and GMM
             if self.kmeans_detector and self.kmeans_detector.is_available:
@@ -535,10 +573,7 @@ class BrainEngine:
         import numpy as np
 
         try:
-            from brain.features.data_fetchers import (
-                fetch_price_data_yfinance,
-                fetch_macro_data_yfinance,
-            )
+            from brain.features.data_fetchers import fetch_price_data_yfinance
 
             # Use NIFTY 50 as the market proxy
             lookback_days = self.config.regime.lookback_years * 365
@@ -550,27 +585,48 @@ class BrainEngine:
 
             # Compute features
             close = price_df["close"].values.astype(float)
+            n_prices = len(close)
 
             # 1. Daily returns
             daily_returns = np.diff(close) / close[:-1]
+            n = len(daily_returns)
 
             # 2. Rolling 20-day volatility
             rolling_vol = np.array([
                 np.std(daily_returns[max(0, i - 19):i + 1])
-                for i in range(len(daily_returns))
+                for i in range(n)
             ])
 
-            # 3. Fetch macro data (VIX, INR/USD)
-            macro = await fetch_macro_data_yfinance()
-            vix_value = macro.get("india_vix", 15.0)
-            inr_usd_value = macro.get("inr_usd", 0.012)
+            # 3. Fetch India VIX historical time-series
+            vix_df = await fetch_price_data_yfinance("^INDIAVIX", days=lookback_days)
+            if vix_df is not None and not vix_df.empty and len(vix_df) > 10:
+                vix_close = vix_df["close"].values.astype(float)
+                # Align VIX to daily_returns length (VIX may have different trading days)
+                if len(vix_close) >= n:
+                    vix_col = vix_close[-n:]
+                else:
+                    # Pad front with the earliest available value
+                    pad = np.full(n - len(vix_close), vix_close[0])
+                    vix_col = np.concatenate([pad, vix_close])
+            else:
+                logger.debug("India VIX historical data unavailable, using rolling vol proxy")
+                # Proxy: annualized rolling vol * 100 approximates VIX
+                vix_col = rolling_vol * np.sqrt(252) * 100
 
-            # Create constant columns for VIX and INR/USD (latest values)
-            # In production these would be time-series; for training we use
-            # rolling approximations
-            n = len(daily_returns)
-            vix_col = np.full(n, vix_value)
-            inr_usd_col = np.full(n, inr_usd_value)
+            # 4. Fetch INR/USD historical time-series
+            inr_usd_df = await fetch_price_data_yfinance("USDINR=X", days=lookback_days)
+            if inr_usd_df is not None and not inr_usd_df.empty and len(inr_usd_df) > 10:
+                # Invert USDINR to get INR/USD (1 INR = X USD)
+                usdinr_close = inr_usd_df["close"].values.astype(float)
+                inr_usd_raw = 1.0 / np.where(usdinr_close > 0, usdinr_close, 83.0)
+                if len(inr_usd_raw) >= n:
+                    inr_usd_col = inr_usd_raw[-n:]
+                else:
+                    pad = np.full(n - len(inr_usd_raw), inr_usd_raw[0])
+                    inr_usd_col = np.concatenate([pad, inr_usd_raw])
+            else:
+                logger.debug("INR/USD historical data unavailable, using constant 0.012")
+                inr_usd_col = np.full(n, 0.012)
 
             # 4. FII/DII flow momentum (from MongoDB if available, else zeros)
             fii_dii_col = np.zeros(n)
@@ -707,6 +763,18 @@ class BrainEngine:
             self.cusum_detector.set_current_regime(self._current_regime)
 
         self._stats["regime_detections"] += 1
+
+        # Persist to regime store for history
+        if self.regime_store:
+            from datetime import date as _date
+            try:
+                await self.regime_store.save_regime(
+                    regime=self._current_regime,
+                    probabilities=hmm_probs,
+                    regime_date=_date.today(),
+                )
+            except Exception:
+                logger.debug("Could not persist regime to store")
 
         # Publish event if regime changed
         if self._current_regime != previous_regime:
@@ -1025,19 +1093,44 @@ class BrainEngine:
         except Exception:
             pass
 
-        # ML model signal (if models are trained)
+        # ML model signal — use regime router if available, else direct prediction
+        regime_routing_result = None
         if self.model_manager and self.model_manager.get_loaded_models():
             try:
                 from brain.models_ml.feature_engineering import prepare_features
                 X, names = prepare_features(feat_dict)
-                pred = await self.model_manager.predict("xgboost_direction", X)
-                if pred and "predictions" in pred:
-                    direction_idx = pred["predictions"][0] if pred["predictions"] else 1
-                    ml_score = {0: -0.8, 1: 0.0, 2: 0.8}.get(direction_idx, 0.0)
-                    raw_signals.append(RawSignal(
-                        source="ml_model", score=ml_score,
-                        confidence=0.7, details={"model": "xgboost_direction", "prediction": pred}
-                    ))
+
+                if self.regime_router and self._current_regime:
+                    # Regime-routed prediction (weighted ensemble per regime)
+                    regime_routing_result = await self.regime_router.route_prediction(
+                        features=X, regime=self._current_regime, return_individual=True,
+                    )
+                    if regime_routing_result and "error" not in regime_routing_result:
+                        direction_str = regime_routing_result.get("regime_direction", "HOLD")
+                        ml_score = {"BUY": 0.8, "HOLD": 0.0, "SELL": -0.8}.get(direction_str, 0.0)
+                        confidence = regime_routing_result.get("confidence", 50) / 100.0
+                        raw_signals.append(RawSignal(
+                            source="ml_regime_routed", score=ml_score,
+                            confidence=max(0.5, confidence),
+                            details={
+                                "regime": self._current_regime.value,
+                                "direction": direction_str,
+                                "models_used": regime_routing_result.get("models_used", []),
+                            }
+                        ))
+                    else:
+                        regime_routing_result = None  # fallback below
+
+                if regime_routing_result is None:
+                    # Direct prediction fallback (no regime routing)
+                    pred = await self.model_manager.predict("xgboost_direction", X)
+                    if pred and "predictions" in pred:
+                        direction_idx = pred["predictions"][0] if pred["predictions"] else 1
+                        ml_score = {0: -0.8, 1: 0.0, 2: 0.8}.get(direction_idx, 0.0)
+                        raw_signals.append(RawSignal(
+                            source="ml_model", score=ml_score,
+                            confidence=0.7, details={"model": "xgboost_direction", "prediction": pred}
+                        ))
             except Exception:
                 pass
 
@@ -1054,7 +1147,7 @@ class BrainEngine:
         self._stats["signals_generated"] += 1
 
         # Convert to serializable dict
-        return {
+        result = {
             "signal_id": signal_event.signal_id,
             "symbol": signal_event.symbol,
             "direction": signal_event.direction.value if hasattr(signal_event.direction, 'value') else str(signal_event.direction),
@@ -1074,6 +1167,20 @@ class BrainEngine:
             "explanation": signal_event.explanation,
             "raw_signals_count": len(raw_signals),
         }
+
+        # Enrich with regime context
+        if self._current_regime:
+            result["market_regime"] = self._current_regime.value
+            result["regime_probabilities"] = self._regime_probabilities
+        if regime_routing_result and "error" not in regime_routing_result:
+            result["regime_routing"] = {
+                "direction": regime_routing_result.get("regime_direction"),
+                "confidence": regime_routing_result.get("confidence"),
+                "weights_used": regime_routing_result.get("weights_used"),
+                "models_used": regime_routing_result.get("models_used"),
+            }
+
+        return result
 
     async def run_backtest(self, symbol: str, horizon: int = 5) -> Dict[str, Any]:
         """Run a backtest for a symbol using model predictions."""

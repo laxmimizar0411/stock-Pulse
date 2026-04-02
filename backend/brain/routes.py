@@ -1,34 +1,21 @@
 """
-Brain API Routes — Phase 1: Data Foundation & Event Infrastructure.
+Brain API Routes — Phase 1+2+3: Data, ML Models, and Regime Detection.
 
-Endpoints:
-    Health & Status:
-        GET  /api/brain/health          — Full health check
-        GET  /api/brain/config          — Config summary
+Phase 1 — Data Foundation:
+    GET  /api/brain/health, /config, /features/{symbol}, /data-quality/{symbol}
+    POST /api/brain/features/compute, /features/batch
+    GET  /api/brain/batch/status, /batch/history, /kafka/topics, /storage/status
 
-    Feature Pipeline:
-        GET  /api/brain/features/{symbol}          — Get/compute features for a symbol
-        POST /api/brain/features/compute           — Trigger feature computation
-        POST /api/brain/features/batch             — Batch compute for multiple symbols
-        GET  /api/brain/features/status             — Feature pipeline status
+Phase 2 — AI/ML Models:
+    POST /api/brain/models/train, /models/predict/{model_name}
+    POST /api/brain/signals/generate, /backtest/run
+    GET  /api/brain/models/status, /signals/active
 
-    Data Quality:
-        GET  /api/brain/data-quality/{symbol}      — Data quality report
-
-    Batch Scheduler:
-        GET  /api/brain/batch/status                — Scheduler status
-        GET  /api/brain/batch/history               — Recent DAG run history
-        POST /api/brain/batch/trigger/{dag_name}    — Trigger a specific DAG
-
-    Kafka:
-        GET  /api/brain/kafka/topics    — List Kafka topics
-        GET  /api/brain/kafka/stats     — Kafka statistics
-
-    Storage:
-        GET  /api/brain/storage/status  — Storage layer status
-
-    Ingestion:
-        GET  /api/brain/ingestion/status — Ingestion pipeline status
+Phase 3 — Market Regime Detection:
+    GET  /api/brain/market-regime, /market-regime/history
+    POST /api/brain/market-regime/detect
+    POST /api/brain/position-size/calculate
+    GET  /api/brain/position-size/state, /phase3/summary
 """
 
 import logging
