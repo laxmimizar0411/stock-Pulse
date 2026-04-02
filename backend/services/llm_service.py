@@ -149,3 +149,49 @@ Provide brief, actionable insights for an investor."""
     except Exception as e:
         logger.error(f"News summarization failed: {str(e)}")
         return "News summarization unavailable."
+
+
+async def analyze_sentiment(symbol: str, headlines: list) -> float:
+    """
+    Get LLM-based contextual sentiment score for a symbol.
+
+    Takes recent headlines and returns a sentiment score [-1, +1]
+    using the existing LLM service (GPT-4o via emergentintegrations).
+
+    Used by the Brain sentiment aggregator as the LLM component
+    in the 0.50×FinBERT + 0.20×VADER + 0.30×LLM ensemble.
+    """
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+        api_key = os.environ.get("EMERGENT_LLM_KEY")
+        if not api_key:
+            return 0.0
+
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"sentiment_{symbol}",
+            system_message=(
+                "You are a financial sentiment analyst for the Indian stock market. "
+                "Given recent news headlines about a stock, output ONLY a single "
+                "floating-point number between -1.0 (extremely bearish) and +1.0 "
+                "(extremely bullish). Output nothing else — just the number."
+            ),
+        ).with_model("openai", "gpt-4o")
+
+        headlines_text = "\n".join(f"- {h}" for h in headlines[:10])
+        prompt = f"Stock: {symbol}\n\nRecent headlines:\n{headlines_text}\n\nSentiment score:"
+
+        user_message = UserMessage(text=prompt)
+        response = await chat.send_message(user_message)
+
+        # Parse the float from response
+        score = float(response.strip())
+        return max(-1.0, min(1.0, score))
+
+    except (ValueError, TypeError):
+        logger.warning(f"LLM sentiment returned non-numeric response for {symbol}")
+        return 0.0
+    except Exception as e:
+        logger.error(f"LLM sentiment analysis failed for {symbol}: {e}")
+        return 0.0
