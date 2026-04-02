@@ -11,7 +11,7 @@ Usage:
 
   # Option B: OAuth with API key/secret (need Dhan Client ID for Step 1)
   export DHAN_API_KEY=c3f73cb5
-  export DHAN_API_SECRET=7730987a-4618-4c3c-956b-23be7784fca0
+  export DHAN_API_SECRET=multiagent-trader-ai
   export DHAN_CLIENT_ID="<your dhan client id from web.dhan.co>"
   python scripts/dhan_api_test.py   # Step 1: prints login URL
   # After browser login, get tokenId from redirect URL and:

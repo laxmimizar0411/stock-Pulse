@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Any
 
 class BrainPhase1Tester:
-    def __init__(self, base_url="https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com"):
+    def __init__(self, base_url="https://multiagent-trader-ai.preview.emergentagent.com"):
         self.base_url = base_url
         self.tests_run = 0
         self.tests_passed = 0

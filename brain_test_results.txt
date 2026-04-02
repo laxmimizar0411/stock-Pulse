@@ -1,14 +1,14 @@
 /root/.venv/lib/python3.11/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.4.0.post2)/charset_normalizer (3.4.4) doesn't match a supported version!
   warnings.warn(
 🚀 Starting Stock Pulse Brain Phase 1 API Tests
-Base URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com
+Base URL: https://multiagent-trader-ai.preview.emergentagent.com
 
 ============================================================
 TESTING BRAIN HEALTH - HIGH PRIORITY
 ============================================================
 
 🔍 Testing Brain Health Check...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/health
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/health
 ✅ PASSED - Status: 200
 
 📊 Analyzing Brain Health Response...
@@ -33,7 +33,7 @@ TESTING BRAIN HEALTH - HIGH PRIORITY
 ✅ Brain health check validation passed
 
 🔍 Testing Brain Config Summary...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/config
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/config
 ✅ PASSED - Status: 200
 ✅ Brain config endpoint working
 
@@ -42,7 +42,7 @@ TESTING FEATURE PIPELINE - HIGH PRIORITY
 ============================================================
 
 🔍 Testing Feature Pipeline Status...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/features/status
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/features/status
 ✅ PASSED - Status: 200
 
 📊 Analyzing Feature Pipeline Status...
@@ -55,7 +55,7 @@ TESTING FEATURE PIPELINE - HIGH PRIORITY
 🔍 Testing Feature Computation for RELIANCE...
 
 🔍 Testing Compute Features - RELIANCE...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/features/RELIANCE
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/features/RELIANCE
 ✅ PASSED - Status: 200
 ✅ Feature computation successful for RELIANCE
    symbol: RELIANCE
@@ -67,7 +67,7 @@ TESTING FEATURE PIPELINE - HIGH PRIORITY
 🔍 Testing POST Feature Computation for TCS...
 
 🔍 Testing POST Compute Features - TCS...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/features/compute
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/features/compute
 ✅ PASSED - Status: 200
 ✅ POST feature computation successful for TCS
    success: True
@@ -80,7 +80,7 @@ TESTING BATCH SCHEDULER - HIGH PRIORITY
 ============================================================
 
 🔍 Testing Batch Scheduler Status...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/batch/status
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/batch/status
 ✅ PASSED - Status: 200
 
 📊 Analyzing Batch Scheduler Status...
@@ -96,7 +96,7 @@ TESTING BATCH SCHEDULER - HIGH PRIORITY
 🔍 Testing DAG Trigger - fii_dii_flows...
 
 🔍 Testing Trigger DAG - fii_dii_flows...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/batch/trigger/fii_dii_flows
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/batch/trigger/fii_dii_flows
 ✅ PASSED - Status: 200
 ✅ DAG trigger successful for fii_dii_flows
    success: True
@@ -105,12 +105,12 @@ TESTING BATCH SCHEDULER - HIGH PRIORITY
 🔍 Testing DAG Trigger - macro_data...
 
 🔍 Testing Trigger DAG - macro_data...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/batch/trigger/macro_data
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/batch/trigger/macro_data
 ✅ PASSED - Status: 200
 ✅ DAG trigger successful for macro_data
 
 🔍 Testing Batch Run History...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/batch/history
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/batch/history
 ✅ PASSED - Status: 200
 ✅ Batch history endpoint working
    Found 4 recent executions
@@ -123,7 +123,7 @@ TESTING KAFKA TOPICS - MEDIUM PRIORITY
 ============================================================
 
 🔍 Testing Kafka Topics List...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/kafka/topics
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/kafka/topics
 ✅ PASSED - Status: 200
 
 📊 Analyzing Kafka Topics...
@@ -138,7 +138,7 @@ TESTING KAFKA TOPICS - MEDIUM PRIORITY
      5. stockpulse.signals (6 partitions)
 
 🔍 Testing Kafka Statistics...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/kafka/stats
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/kafka/stats
 ✅ PASSED - Status: 200
 ✅ Kafka statistics endpoint working
 
@@ -147,7 +147,7 @@ TESTING STORAGE & INGESTION - MEDIUM PRIORITY
 ============================================================
 
 🔍 Testing Storage Status...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/storage/status
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/storage/status
 ✅ PASSED - Status: 200
 
 📊 Analyzing Storage Status...
@@ -156,7 +156,7 @@ TESTING STORAGE & INGESTION - MEDIUM PRIORITY
 ✅ Storage mode is filesystem as expected
 
 🔍 Testing Ingestion Status...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/ingestion/status
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/ingestion/status
 ✅ PASSED - Status: 200
 
 📊 Analyzing Ingestion Status...
@@ -178,7 +178,7 @@ TESTING PHASE 1 SUMMARY
 ============================================================
 
 🔍 Testing Phase 1 Summary...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/phase1/summary
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/phase1/summary
 ✅ PASSED - Status: 200
 
 📊 Analyzing Phase 1 Summary...
@@ -200,7 +200,7 @@ TESTING DATA QUALITY
 ============================================================
 
 🔍 Testing Data Quality - RELIANCE...
-   URL: https://e9f186b4-9ef4-468e-8a06-45ab03aad004.preview.emergentagent.com/api/brain/data-quality/RELIANCE
+   URL: https://multiagent-trader-ai.preview.emergentagent.com/api/brain/data-quality/RELIANCE
 ✅ PASSED - Status: 200
 ✅ Data quality endpoint working for RELIANCE
    Symbol: RELIANCE
