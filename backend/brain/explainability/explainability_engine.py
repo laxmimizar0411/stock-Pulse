@@ -155,7 +155,6 @@ class ExplainabilityEngine:
         feature_names: List[str],
     ):
         """Simple LIME-like local perturbation explanation."""
-        n_features = len(feature_names)
         n_samples = 100
         rng = np.random.default_rng(42)
 

@@ -1603,26 +1603,57 @@ async def explain_prediction(request: ExplainRequest):
     if not brain_engine.explainability_engine:
         raise HTTPException(status_code=503, detail="Explainability engine not initialized")
     
-    # Get model and features from model manager
+    # Get model from model manager
     if not brain_engine.model_manager:
         raise HTTPException(status_code=503, detail="Model manager not initialized")
     
-    model_info = brain_engine.model_manager.get_model(request.model_name)
-    if not model_info:
-        raise HTTPException(status_code=404, detail=f"Model '{request.model_name}' not found")
+    # Access the internal _models dict to get the trained model object
+    model_obj = brain_engine.model_manager._models.get(request.model_name)
+    if model_obj is None:
+        available = brain_engine.model_manager.get_loaded_models()
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model '{request.model_name}' not found. Available: {available}"
+        )
     
     # Get features for the symbol
     import numpy as np
     try:
         features_data = await brain_engine.feature_pipeline.compute_features(request.symbol)
-        feature_names = list(features_data.keys())
-        feature_values = np.array([list(features_data.values())])
-    except Exception:
-        raise HTTPException(status_code=400, detail=f"Could not compute features for {request.symbol}")
+        # Filter to numeric features only
+        numeric_features = {k: v for k, v in features_data.items() if isinstance(v, (int, float)) and not np.isnan(v)}
+        feature_names = list(numeric_features.keys())
+        feature_values = np.array([list(numeric_features.values())], dtype=np.float64)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not compute features for {request.symbol}: {str(e)}")
     
+    if len(feature_names) == 0:
+        raise HTTPException(status_code=400, detail="No numeric features computed for symbol")
+
+    # Check feature count matches model expectation
+    try:
+        expected_features = model_obj.n_features_in_ if hasattr(model_obj, 'n_features_in_') else len(feature_names)
+        if len(feature_names) != expected_features:
+            # Try to match feature names to model's expected features
+            if hasattr(model_obj, 'feature_names_in_'):
+                model_feature_names = list(model_obj.feature_names_in_)
+                matched_values = []
+                matched_names = []
+                for fn in model_feature_names:
+                    if fn in numeric_features:
+                        matched_values.append(numeric_features[fn])
+                        matched_names.append(fn)
+                    else:
+                        matched_values.append(0.0)
+                        matched_names.append(fn)
+                feature_names = matched_names
+                feature_values = np.array([matched_values], dtype=np.float64)
+    except Exception:
+        pass
+
     result = brain_engine.explainability_engine.explain_prediction(
         symbol=request.symbol,
-        model=model_info.get("model"),
+        model=model_obj,
         model_name=request.model_name,
         features=feature_values.flatten(),
         feature_names=feature_names,

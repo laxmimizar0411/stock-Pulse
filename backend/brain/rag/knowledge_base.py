@@ -118,37 +118,77 @@ class RAGKnowledgeBase:
             self._initialized = False
 
     def _seed_knowledge(self):
-        """Seed the knowledge base with fundamental Indian market knowledge."""
+        """Seed the knowledge base with comprehensive Indian market knowledge."""
         seed_docs = [
             KBDocument(
                 title="SEBI Margin Requirements",
-                content="SEBI mandates VAR-based margins for equity trading. Group I stocks (F&O eligible) require 10% VAR margin + 3.5% ELM. Group II requires 20% VAR + 5% ELM. Delivery trades require additional 20-75% margin depending on group.",
+                content="SEBI mandates VAR-based margins for equity trading. Group I stocks (F&O eligible) require 10% VAR margin + 3.5% ELM. Group II requires 20% VAR + 5% ELM. Delivery trades require additional 20-75% margin depending on group. Peak margin reporting is mandatory since Dec 2020. Brokers must report margins 4 times daily.",
                 source="sebi", category="regulation",
             ),
             KBDocument(
                 title="Circuit Breaker Rules India",
-                content="NSE applies circuit breakers at 10%, 15%, and 20% movement in indices. Individual stock circuits: Group I at 20%, Group II at 10%, Group III at 5%. Trading halts when circuit is hit.",
+                content="NSE applies market-wide circuit breakers at 10%, 15%, and 20% movement in NIFTY 50 or SENSEX. Individual stock circuits: Group I at 20%, Group II at 10%, Group III at 5%. Trading halts for 15-45 minutes when triggered. Price bands are revised quarterly based on volatility.",
                 source="sebi", category="regulation",
             ),
             KBDocument(
-                title="NIFTY 50 Composition",
-                content="NIFTY 50 represents the top 50 companies by free-float market cap on NSE. Key sectors: Banking (30%), IT (15%), Energy (10%), FMCG (8%). Rebalanced semi-annually in March and September.",
+                title="NIFTY 50 Composition and Methodology",
+                content="NIFTY 50 represents the top 50 companies by free-float market cap on NSE. Key sectors: Banking (30%), IT (15%), Energy (10%), FMCG (8%). Rebalanced semi-annually in March and September. Stocks must meet minimum float-adjusted market cap, trading frequency, and impact cost criteria. Maximum weight cap of 33% for single stock and 20% from a single sector.",
                 source="reference", category="index",
             ),
             KBDocument(
-                title="FII/DII Flow Impact",
-                content="Foreign Institutional Investors (FII) and Domestic Institutional Investors (DII) flows significantly impact Indian markets. FII net buying is bullish, while FII selling creates downward pressure. DII often provides counter-balance.",
+                title="FII/DII Flow Impact on Indian Markets",
+                content="Foreign Institutional Investors (FII) and Domestic Institutional Investors (DII) flows significantly impact Indian markets. FII net buying is bullish, while FII selling creates downward pressure. DII (mutual funds, insurance, pensions) often provides counter-balance. SEBI mandates daily FII/DII flow disclosure. FII flows are influenced by US dollar strength, global risk appetite, and India's relative valuation. Monthly SIP inflows (Rs 20,000+ crores) provide structural DII support.",
                 source="research", category="flows",
             ),
             KBDocument(
-                title="Indian Market Timing",
-                content="NSE trading hours: 9:15 AM to 3:30 PM IST. Pre-open session: 9:00-9:15 AM. Post-close: 3:40-4:00 PM. T+1 settlement cycle effective from January 2023.",
+                title="Indian Market Trading Hours and Settlement",
+                content="NSE trading hours: 9:15 AM to 3:30 PM IST. Pre-open session: 9:00-9:15 AM (price discovery). Post-close session: 3:40-4:00 PM (closing price). T+1 settlement cycle effective from January 2023. Commodity trading: 9:00 AM to 11:30 PM. Currency trading: 9:00 AM to 5:00 PM. ASM (Additional Surveillance Measure) and GSM (Graded Surveillance Measure) lists are published fortnightly.",
                 source="reference", category="operations",
             ),
             KBDocument(
-                title="Key Indian Financial Metrics",
-                content="Important metrics for Indian stocks: P/E ratio, P/B ratio, Debt-to-Equity, ROE, ROCE, Promoter Holding %, Pledge %, Dividend Yield, EPS growth. SEBI requires quarterly results disclosure within 45 days.",
+                title="Key Financial Metrics for Indian Equities",
+                content="Important metrics: P/E ratio (vs industry median), P/B ratio, Debt-to-Equity, ROE (>15% considered good), ROCE (>18% preferred), Promoter Holding % (>50% preferred), Pledge % (<20% safe), Dividend Yield, EPS growth (3yr CAGR), Cash Flow from Operations, Interest Coverage Ratio, Current Ratio. SEBI requires quarterly results disclosure within 45 days of quarter-end. Annual results within 60 days.",
                 source="reference", category="fundamentals",
+            ),
+            KBDocument(
+                title="RBI Monetary Policy Framework",
+                content="Reserve Bank of India (RBI) conducts monetary policy through the Monetary Policy Committee (MPC) which meets 6 times a year (bi-monthly). Key rates: Repo Rate (main policy rate), Reverse Repo Rate, CRR (Cash Reserve Ratio), SLR (Statutory Liquidity Ratio). RBI targets 4% CPI inflation with +/-2% band. Rate cuts are bullish for banking, real estate, and auto sectors. RBI also manages forex reserves, government borrowings, and rupee stability.",
+                source="rbi", category="monetary_policy",
+            ),
+            KBDocument(
+                title="Indian Tax on Stock Market Investments",
+                content="Short-term capital gains (STCG) tax on listed equity: 20% (if held less than 12 months). Long-term capital gains (LTCG) tax: 12.5% on gains exceeding Rs 1.25 lakh per year. Securities Transaction Tax (STT) applies on all equity transactions. Dividend income taxed as per income slab. No STT on commodity futures. F&O income/loss treated as business income. Tax loss harvesting is commonly used before March 31.",
+                source="reference", category="taxation",
+            ),
+            KBDocument(
+                title="Promoter Holding and Pledge Analysis",
+                content="Promoter holding indicates insider confidence. Above 50% is considered strong. Declining promoter holding is a negative signal. Promoter pledge (shares pledged as collateral for loans) above 20% is a red flag. If stock price falls below trigger price, pledged shares may be sold by lenders, creating a downward spiral. SEBI mandates quarterly disclosure of pledge data. Major promoter pledge reductions are treated as positive triggers.",
+                source="research", category="governance",
+            ),
+            KBDocument(
+                title="Indian IPO Market and Process",
+                content="Indian IPO process: DRHP filing with SEBI, SEBI review (30-75 days), roadshow, price band announcement, subscription period (3 days for retail, 1 for anchor), allotment (6 days post close), listing (T+3 after allotment). IPO categories: QIB (50%), NII/HNI (15%), Retail (35%). Key metrics: GMP (Grey Market Premium), subscription ratio by category, PE vs listed peers. SEBI mandates minimum 10% retail allocation.",
+                source="sebi", category="ipo",
+            ),
+            KBDocument(
+                title="Technical Analysis Patterns in Indian Markets",
+                content="Common technical patterns in Indian equities: Support/Resistance at round numbers, Gap-up/Gap-down analysis important for NIFTY. Moving averages: 20-DMA (short-term), 50-DMA (medium), 200-DMA (long-term trend). India VIX below 13 indicates low volatility (bullish), above 20 indicates fear. Put-Call Ratio (PCR) above 1.2 is bullish, below 0.8 is bearish. Open Interest analysis at strike prices helps identify NIFTY support/resistance. F&O expiry (last Thursday) often causes volatility.",
+                source="research", category="technical",
+            ),
+            KBDocument(
+                title="Sector Analysis: Indian Banking",
+                content="Indian banking sector includes PSU banks (SBI, BOB, PNB), private banks (HDFC, ICICI, Kotak, Axis), and NBFCs (Bajaj Finance, HDFC Ltd). Key metrics: NIM (Net Interest Margin), GNPA/NNPA ratios, CASA ratio, Credit growth, Provision Coverage Ratio. RBI rate decisions directly impact NIMs. PSU bank reforms and privatization are ongoing themes. Credit growth above 15% is bullish for the sector.",
+                source="research", category="sector",
+            ),
+            KBDocument(
+                title="Sector Analysis: Indian IT Services",
+                content="Indian IT sector is export-driven (90%+ revenue from US/Europe). Key players: TCS, Infosys, Wipro, HCL Tech, Tech Mahindra. Key metrics: Revenue growth (CC terms), EBIT margin, deal wins (TCV), attrition rate, utilization rate. Rupee depreciation benefits IT companies. US recession fears and AI disruption are key risks. Q1 (Apr-Jun) is traditionally weak due to furloughs ending. Guidance upgrades are strong positive triggers.",
+                source="research", category="sector",
+            ),
+            KBDocument(
+                title="Indian Market Seasonality",
+                content="Known Indian market seasonal patterns: Pre-budget rally (Jan), Budget volatility (Feb 1), March tax-loss selling, April-May pre-election rally in election years, Monsoon impact on FMCG/Agri (Jul-Sep), Festive season boost for auto/consumer (Oct-Nov), FII tax-harvesting selling (Dec). Muhurat trading on Diwali is traditionally bullish. Samvat year analysis is followed by some traders.",
+                source="research", category="seasonality",
             ),
         ]
 

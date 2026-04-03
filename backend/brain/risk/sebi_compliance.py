@@ -145,7 +145,6 @@ class SEBIComplianceEngine:
 
         # 5. Mark-to-Market Margin (if price available)
         if current_price > 0 and prev_close > 0:
-            price_change = abs(current_price - prev_close) / prev_close
             quantity = trade_value / current_price if current_price > 0 else 0
             result.mtm_margin = quantity * abs(current_price - prev_close)
 

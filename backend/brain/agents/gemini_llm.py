@@ -6,7 +6,7 @@ Provides the LLM layer for all agents:
   Tier 2: gemini-2.0-flash — extraction, formatting (FREE tier)
 
 Features:
-- Async generation
+- Async generation (non-blocking via asyncio.to_thread)
 - Structured JSON output parsing
 - Token usage tracking
 - Retry with exponential backoff
@@ -30,6 +30,7 @@ class GeminiLLM:
         self._tier = tier
         self._temperature = temperature
         self._client = None
+        self._genai = None
         self._stats = {
             "calls": 0,
             "total_tokens": 0,
@@ -61,19 +62,22 @@ class GeminiLLM:
         return self._client is not None
 
     async def generate(self, prompt: str, max_tokens: int = 2000) -> str:
-        """Generate text from a prompt."""
+        """Generate text from a prompt (non-blocking via thread pool)."""
         if not self._client:
-            return "{\"error\": \"LLM not initialized\"}"
+            return '{"error": "LLM not initialized"}'
 
         start = time.time()
         try:
-            response = self._client.generate_content(
-                prompt,
-                generation_config=self._genai.GenerationConfig(
-                    temperature=self._temperature,
-                    max_output_tokens=max_tokens,
-                ),
+            genai_config = self._genai.GenerationConfig(
+                temperature=self._temperature,
+                max_output_tokens=max_tokens,
             )
+            client = self._client
+
+            def _sync_call():
+                return client.generate_content(prompt, generation_config=genai_config)
+
+            response = await asyncio.to_thread(_sync_call)
 
             text = response.text.strip()
             elapsed_ms = (time.time() - start) * 1000

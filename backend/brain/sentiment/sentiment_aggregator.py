@@ -265,13 +265,23 @@ class SentimentAggregator:
             from brain.sentiment.finbert_analyzer import _vader_analyze
             vader_results = _vader_analyze(texts)
 
+            # LLM sentiment (if configured)
+            llm_score = None
+            if self._llm_sentiment_fn and texts:
+                try:
+                    headlines = [a.title for a in articles if hasattr(a, "title") and a.title][:10]
+                    if headlines:
+                        llm_score = await self._llm_sentiment_fn(symbol, headlines)
+                except Exception as llm_err:
+                    logger.debug(f"LLM sentiment skipped for {symbol} in batch: {llm_err}")
+
             now = datetime.now(timezone.utc)
             result = self._aggregate_scores(
                 symbol=symbol,
                 articles=articles,
                 finbert_results=finbert_results,
                 vader_results=vader_results,
-                llm_score=None,
+                llm_score=llm_score,
                 now=now,
             )
             results[symbol] = result

@@ -1809,6 +1809,60 @@ class BrainEngine:
         else:
             health["subsystems"]["agent_orchestrator"] = {"status": "not_initialized"}
 
+        # Phase 3.5: RAG Knowledge Base
+        if self.rag_knowledge_base and self.rag_knowledge_base.is_available:
+            health["subsystems"]["rag_knowledge_base"] = {
+                "status": "healthy",
+                "stats": self.rag_knowledge_base.get_stats(),
+            }
+        else:
+            health["subsystems"]["rag_knowledge_base"] = {"status": "not_initialized"}
+
+        # Phase 3.6: Governance Scorer
+        if self.governance_scorer:
+            health["subsystems"]["governance_scorer"] = {
+                "status": "healthy",
+                "stats": self.governance_scorer.get_stats(),
+            }
+        else:
+            health["subsystems"]["governance_scorer"] = {"status": "not_initialized"}
+
+        # Phase 3.7: Sector Rotation
+        if self.sector_rotation:
+            health["subsystems"]["sector_rotation"] = {
+                "status": "healthy",
+                "stats": self.sector_rotation.get_stats(),
+            }
+        else:
+            health["subsystems"]["sector_rotation"] = {"status": "not_initialized"}
+
+        # Phase 3.8: Dividend Intelligence
+        if self.dividend_intelligence:
+            health["subsystems"]["dividend_intelligence"] = {
+                "status": "healthy",
+                "stats": self.dividend_intelligence.get_stats(),
+            }
+        else:
+            health["subsystems"]["dividend_intelligence"] = {"status": "not_initialized"}
+
+        # Phase 3.9: Regulatory Calendar
+        if self.regulatory_calendar:
+            health["subsystems"]["regulatory_calendar"] = {
+                "status": "healthy",
+                "stats": self.regulatory_calendar.get_stats(),
+            }
+        else:
+            health["subsystems"]["regulatory_calendar"] = {"status": "not_initialized"}
+
+        # Phase 3.10: Explainability Engine
+        if self.explainability_engine:
+            health["subsystems"]["explainability_engine"] = {
+                "status": "healthy",
+                "stats": self.explainability_engine.get_stats(),
+            }
+        else:
+            health["subsystems"]["explainability_engine"] = {"status": "not_initialized"}
+
         # Overall status
         initialized_count = sum(
             1 for s in health["subsystems"].values()

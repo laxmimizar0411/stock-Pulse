@@ -28,6 +28,12 @@ class ReportGeneratorAgent(BaseAgent):
         bull_case = context.get("bull_case", {})
         bear_case = context.get("bear_case", {})
 
+        analyst_summary = "\n".join(
+            f"  - {r.get('agent_name', 'Agent')}: {r.get('signal', 'HOLD')} "
+            f"(confidence: {r.get('confidence', 0):.2f})"
+            for r in analyst_results
+        )
+
         return f"""You are a Report Generator for an Indian stock analysis platform.
 Generate a comprehensive yet concise investment report for {symbol}.
 
@@ -46,6 +52,9 @@ Risk Review:
   Decision: {risk_review.get('analysis', {}).get('decision', 'N/A')}
   Risk Score: {risk_review.get('analysis', {}).get('risk_score', 'N/A')}
   Reasoning: {risk_review.get('reasoning', '')}
+
+Analyst Views:
+{analyst_summary}
 
 Bull Case: {bull_case.get('reasoning', 'N/A')}
 Bear Case: {bear_case.get('reasoning', 'N/A')}

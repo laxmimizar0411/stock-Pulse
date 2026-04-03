@@ -80,13 +80,20 @@ Score guide: -1.0 = extremely bearish, -0.5 = bearish, 0.0 = neutral, 0.5 = bull
 
     try:
         gen_model = genai.GenerativeModel(model)
-        response = gen_model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=0.1,
-                max_output_tokens=200,
-            ),
-        )
+
+        # Run sync Gemini call in thread pool to avoid blocking event loop
+        import asyncio
+
+        def _sync_generate():
+            return gen_model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=200,
+                ),
+            )
+
+        response = await asyncio.to_thread(_sync_generate)
 
         text = response.text.strip()
         
@@ -130,13 +137,19 @@ async def analyze_deep_llm(
 
     try:
         gen_model = genai.GenerativeModel(model)
-        response = gen_model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=0.3,
-                max_output_tokens=1000,
-            ),
-        )
+
+        import asyncio
+
+        def _sync_generate():
+            return gen_model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.3,
+                    max_output_tokens=1000,
+                ),
+            )
+
+        response = await asyncio.to_thread(_sync_generate)
         return response.text.strip()
 
     except Exception as e:
