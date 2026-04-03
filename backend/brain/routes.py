@@ -28,7 +28,7 @@ Phase 3.2 — Sentiment Analysis:
 """
 
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -1171,5 +1171,533 @@ async def get_phase3_3_summary():
             "GET  /api/brain/agents/status",
             "GET  /api/brain/phase3_3/summary",
         ],
+    }
+
+
+
+# =====================================================================
+# Phase 3.4: Risk Management Engine
+# =====================================================================
+
+class VaRRequest(BaseModel):
+    """Request body for VaR calculation."""
+    symbol: str
+    returns: List[float]  # Daily return values
+    portfolio_value: float = 1000000.0
+
+class StressTestRequest(BaseModel):
+    """Request body for stress testing."""
+    symbol: str
+    portfolio_value: float = 1000000.0
+    sector: str = "general"
+    scenarios: Optional[List[str]] = None
+
+class SEBIMarginRequest(BaseModel):
+    """Request body for SEBI margin check."""
+    symbol: str
+    trade_value: float
+    is_delivery: bool = True
+    current_price: float = 0.0
+    prev_close: float = 0.0
+    portfolio_value: float = 0.0
+
+class HRPRequest(BaseModel):
+    """Request body for HRP portfolio optimization."""
+    symbols: List[str]
+    returns_matrix: List[List[float]]  # [[day1_ret1, day1_ret2], [day2_ret1, day2_ret2], ...]
+
+
+@router.post("/risk/var")
+async def calculate_var(request: VaRRequest):
+    """
+    Calculate Value at Risk (VaR) using three methods:
+    - Historical VaR
+    - Parametric VaR (normal distribution)
+    - Monte Carlo VaR (10,000 simulations)
+    
+    Plus Conditional VaR (CVaR / Expected Shortfall).
+    """
+    if len(request.returns) < 10:
+        raise HTTPException(status_code=400, detail="Need at least 10 return observations")
+    
+    result = await brain_engine.calculate_var(
+        symbol=request.symbol,
+        returns_list=request.returns,
+        portfolio_value=request.portfolio_value,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+@router.post("/risk/stress-test")
+async def run_stress_test(request: StressTestRequest):
+    """
+    Run historical stress tests:
+    - Global Financial Crisis 2008 (~60% drawdown)
+    - COVID-19 Crash 2020 (~38% drawdown)
+    - Demonetization 2016 (~6% drawdown)
+    - Taper Tantrum 2013 (~12% drawdown)
+    - IL&FS Crisis 2018 (~15% drawdown)
+    """
+    result = await brain_engine.run_stress_test(
+        symbol=request.symbol,
+        portfolio_value=request.portfolio_value,
+        sector=request.sector,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+@router.get("/risk/stress-test/scenarios")
+async def get_stress_scenarios():
+    """Get list of available stress test scenarios."""
+    if not brain_engine.stress_test_engine:
+        raise HTTPException(status_code=503, detail="Stress test engine not initialized")
+    return {"scenarios": brain_engine.stress_test_engine.get_available_scenarios()}
+
+
+@router.post("/risk/sebi-margin")
+async def check_sebi_margin(request: SEBIMarginRequest):
+    """
+    Calculate SEBI-mandated margin requirements:
+    - VAR margin, Extreme Loss Margin (ELM)
+    - Delivery margin (for T+1 settlement)
+    - Concentration margin
+    - Compliance violations check
+    """
+    result = await brain_engine.check_sebi_margin(
+        symbol=request.symbol,
+        trade_value=request.trade_value,
+        is_delivery=request.is_delivery,
+        current_price=request.current_price,
+        prev_close=request.prev_close,
+        portfolio_value=request.portfolio_value,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+@router.post("/risk/hrp")
+async def optimize_hrp_portfolio(request: HRPRequest):
+    """
+    Hierarchical Risk Parity (HRP) portfolio optimization.
+    
+    Marcos López de Prado algorithm:
+    1. Cluster correlation matrix
+    2. Quasi-diagonalize
+    3. Recursive bisection for inverse-variance allocation
+    """
+    import numpy as np
+
+    if not brain_engine.hrp_optimizer:
+        raise HTTPException(status_code=503, detail="HRP optimizer not initialized")
+    if len(request.symbols) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 symbols")
+    if len(request.returns_matrix) < 10:
+        raise HTTPException(status_code=400, detail="Need at least 10 return observations")
+
+    returns = np.array(request.returns_matrix)
+    if returns.shape[1] != len(request.symbols):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Returns matrix columns ({returns.shape[1]}) != symbols ({len(request.symbols)})"
+        )
+
+    result = brain_engine.hrp_optimizer.optimize(returns, request.symbols)
+    return result.to_dict()
+
+
+@router.get("/phase3_4/summary")
+async def get_phase3_4_summary():
+    """Phase 3.4 summary: Risk Management Engine."""
+    return {
+        "phase": "3.4",
+        "name": "Risk Management Engine",
+        "status": "operational" if brain_engine.var_calculator else "not_initialized",
+        "components": {
+            "var_calculator": {
+                "status": "ready" if brain_engine.var_calculator else "not_initialized",
+                "methods": ["Historical VaR", "Parametric VaR", "Monte Carlo VaR (10k sims)", "CVaR"],
+                "confidence_level": "95%",
+            },
+            "stress_testing": {
+                "status": "ready" if brain_engine.stress_test_engine else "not_initialized",
+                "scenarios": ["GFC 2008", "COVID 2020", "Demonetization 2016", "Taper Tantrum 2013", "IL&FS 2018"],
+            },
+            "sebi_compliance": {
+                "status": "ready" if brain_engine.sebi_compliance else "not_initialized",
+                "checks": ["VAR margin", "ELM", "Delivery margin", "Concentration", "Circuit breakers"],
+            },
+            "hrp_portfolio": {
+                "status": "ready" if brain_engine.hrp_optimizer else "not_initialized",
+                "algorithm": "Marcos López de Prado HRP (cluster → quasi-diag → recursive bipartition)",
+            },
+        },
+        "api_endpoints": [
+            "POST /api/brain/risk/var",
+            "POST /api/brain/risk/stress-test",
+            "GET  /api/brain/risk/stress-test/scenarios",
+            "POST /api/brain/risk/sebi-margin",
+            "POST /api/brain/risk/hrp",
+            "GET  /api/brain/phase3_4/summary",
+        ],
+    }
+
+
+
+# =====================================================================
+# Phase 3.5: RAG Knowledge Base
+# =====================================================================
+
+class RAGSearchRequest(BaseModel):
+    """Request body for RAG search."""
+    query: str
+    limit: int = 5
+    category: Optional[str] = None
+
+class RAGAddDocRequest(BaseModel):
+    """Request body for adding a document to RAG."""
+    title: str
+    content: str
+    source: str = "user"
+    category: str = "general"
+    symbols: List[str] = []
+
+
+@router.post("/rag/search")
+async def rag_search(request: RAGSearchRequest):
+    """Search the knowledge base using semantic similarity."""
+    if not brain_engine.rag_knowledge_base or not brain_engine.rag_knowledge_base.is_available:
+        raise HTTPException(status_code=503, detail="RAG knowledge base not available")
+    results = brain_engine.rag_knowledge_base.search(
+        query=request.query, limit=request.limit, category=request.category
+    )
+    return {"query": request.query, "results": [r.to_dict() for r in results], "count": len(results)}
+
+
+@router.post("/rag/add")
+async def rag_add_document(request: RAGAddDocRequest):
+    """Add a document to the knowledge base."""
+    if not brain_engine.rag_knowledge_base or not brain_engine.rag_knowledge_base.is_available:
+        raise HTTPException(status_code=503, detail="RAG knowledge base not available")
+    from brain.rag.knowledge_base import KBDocument
+    doc = KBDocument(
+        title=request.title, content=request.content,
+        source=request.source, category=request.category, symbols=request.symbols,
+    )
+    success = brain_engine.rag_knowledge_base.add_document(doc)
+    return {"success": success, "doc_id": doc.doc_id}
+
+
+@router.get("/rag/status")
+async def rag_status():
+    """Get RAG knowledge base status."""
+    if not brain_engine.rag_knowledge_base:
+        return {"status": "not_initialized"}
+    return {"status": "healthy" if brain_engine.rag_knowledge_base.is_available else "unavailable",
+            "stats": brain_engine.rag_knowledge_base.get_stats()}
+
+
+@router.get("/phase3_5/summary")
+async def get_phase3_5_summary():
+    """Phase 3.5 summary: RAG Knowledge Base."""
+    kb = brain_engine.rag_knowledge_base
+    return {
+        "phase": "3.5", "name": "RAG Knowledge Base (Qdrant)",
+        "status": "operational" if (kb and kb.is_available) else "not_available",
+        "vector_db": "Qdrant (in-memory)",
+        "embedder": "all-MiniLM-L6-v2 (384-dim)",
+        "stats": kb.get_stats() if kb else {},
+        "api_endpoints": ["POST /api/brain/rag/search", "POST /api/brain/rag/add", "GET /api/brain/rag/status"],
+    }
+
+
+# =====================================================================
+# Phase 3.6: Corporate Governance Scoring
+# =====================================================================
+
+class GovernanceRequest(BaseModel):
+    """Request body for governance scoring."""
+    symbol: str
+    promoter_holding_pct: float = 50.0
+    promoter_pledge_pct: float = 0.0
+    board_independence_ratio: float = 0.5
+    big4_auditor: bool = True
+    auditor_tenure_years: int = 3
+    related_party_txn_pct: float = 5.0
+    regulatory_penalties: int = 0
+    dividend_consistency_years: int = 5
+    mgmt_turnover_3yr: int = 1
+    timely_disclosures: bool = True
+
+
+@router.post("/governance/score")
+async def compute_governance_score(request: GovernanceRequest):
+    """Compute corporate governance score (0-100)."""
+    if not brain_engine.governance_scorer:
+        raise HTTPException(status_code=503, detail="Governance scorer not initialized")
+    result = brain_engine.governance_scorer.score(**request.model_dump())
+    return result.to_dict()
+
+
+@router.get("/phase3_6/summary")
+async def get_phase3_6_summary():
+    """Phase 3.6 summary: Corporate Governance Scoring."""
+    return {
+        "phase": "3.6", "name": "Corporate Governance Scoring",
+        "status": "operational" if brain_engine.governance_scorer else "not_initialized",
+        "scoring_components": [
+            "Promoter Holding (20pts)", "Promoter Pledge (15pts)", "Board Independence (15pts)",
+            "Auditor Quality (10pts)", "Related-Party Txn (10pts)", "Regulatory Compliance (10pts)",
+            "Dividend Consistency (10pts)", "Management Stability (5pts)", "Disclosure Quality (5pts)",
+        ],
+        "grades": ["A+", "A", "B+", "B", "C+", "C", "D"],
+        "api_endpoints": ["POST /api/brain/governance/score"],
+    }
+
+
+# =====================================================================
+# Phase 3.7: Sector Rotation Engine
+# =====================================================================
+
+class SectorRotationRequest(BaseModel):
+    """Request body for sector rotation analysis."""
+    sector_returns: Dict[str, Dict[str, float]]  # {sector: {"1m": %, "3m": %, "6m": %}}
+    business_cycle: str = "expansion"
+
+
+@router.post("/sector/rotation")
+async def compute_sector_rotation(request: SectorRotationRequest):
+    """Compute sector rotation scores and rankings."""
+    if not brain_engine.sector_rotation:
+        raise HTTPException(status_code=503, detail="Sector rotation engine not initialized")
+    results = brain_engine.sector_rotation.compute_rotation(
+        sector_returns=request.sector_returns,
+        business_cycle=request.business_cycle,
+    )
+    return {"scores": [r.to_dict() for r in results], "business_cycle": request.business_cycle}
+
+
+@router.get("/sector/list")
+async def get_sector_list():
+    """Get list of tracked sectors."""
+    if not brain_engine.sector_rotation:
+        raise HTTPException(status_code=503, detail="Sector rotation engine not initialized")
+    return {"sectors": brain_engine.sector_rotation.get_sectors()}
+
+
+@router.get("/phase3_7/summary")
+async def get_phase3_7_summary():
+    """Phase 3.7 summary: Sector Rotation Engine."""
+    return {
+        "phase": "3.7", "name": "Sector Rotation Engine",
+        "status": "operational" if brain_engine.sector_rotation else "not_initialized",
+        "sectors": list(brain_engine.sector_rotation.get_sectors().keys()) if brain_engine.sector_rotation else [],
+        "business_cycles": ["expansion", "peak", "contraction", "trough"],
+        "api_endpoints": ["POST /api/brain/sector/rotation", "GET /api/brain/sector/list"],
+    }
+
+
+# =====================================================================
+# Phase 3.8: Dividend Intelligence
+# =====================================================================
+
+class DividendAnalysisRequest(BaseModel):
+    """Request body for dividend analysis."""
+    symbol: str
+    current_price: float = 100.0
+    eps: float = 10.0
+    consecutive_years: int = 5
+    dividends: List[Dict[str, Any]] = []
+
+
+@router.post("/dividends/analyze")
+async def analyze_dividends(request: DividendAnalysisRequest):
+    """Analyze dividend profile for a symbol."""
+    if not brain_engine.dividend_intelligence:
+        raise HTTPException(status_code=503, detail="Dividend intelligence not initialized")
+    from brain.dividends.dividend_intelligence import DividendRecord
+    records = [DividendRecord(
+        symbol=request.symbol,
+        amount_per_share=d.get("amount", 0),
+        dividend_type=d.get("type", "final"),
+    ) for d in request.dividends]
+    result = brain_engine.dividend_intelligence.analyze(
+        symbol=request.symbol, current_price=request.current_price,
+        dividends=records, eps=request.eps, consecutive_years=request.consecutive_years,
+    )
+    return result.to_dict()
+
+
+@router.get("/phase3_8/summary")
+async def get_phase3_8_summary():
+    """Phase 3.8 summary: Dividend Intelligence."""
+    return {
+        "phase": "3.8", "name": "Dividend Intelligence",
+        "status": "operational" if brain_engine.dividend_intelligence else "not_initialized",
+        "metrics": ["Current Yield", "Trailing 12M Dividend", "5Y CAGR", "Payout Ratio",
+                     "Consecutive Years", "Sustainability Score"],
+        "grades": ["Aristocrat", "Consistent", "Growing", "Irregular", "Non-payer"],
+        "api_endpoints": ["POST /api/brain/dividends/analyze"],
+    }
+
+
+# =====================================================================
+# Phase 3.9: Regulatory Event Calendar
+# =====================================================================
+
+@router.get("/calendar/upcoming")
+async def get_upcoming_events(
+    days: int = Query(30, description="Number of days to look ahead"),
+    event_type: Optional[str] = Query(None, description="Filter by event type"),
+):
+    """Get upcoming regulatory and market events."""
+    if not brain_engine.regulatory_calendar:
+        raise HTTPException(status_code=503, detail="Regulatory calendar not initialized")
+    events = brain_engine.regulatory_calendar.get_upcoming(days=days, event_type=event_type)
+    return {"events": events, "count": len(events), "days_ahead": days}
+
+
+@router.get("/calendar/by-type/{event_type}")
+async def get_events_by_type(event_type: str):
+    """Get all events of a specific type (rbi, sebi, expiry, earnings, budget, tax)."""
+    if not brain_engine.regulatory_calendar:
+        raise HTTPException(status_code=503, detail="Regulatory calendar not initialized")
+    events = brain_engine.regulatory_calendar.get_by_type(event_type)
+    return {"events": events, "count": len(events), "type": event_type}
+
+
+@router.get("/phase3_9/summary")
+async def get_phase3_9_summary():
+    """Phase 3.9 summary: Regulatory Event Calendar."""
+    cal = brain_engine.regulatory_calendar
+    return {
+        "phase": "3.9", "name": "Regulatory Event Calendar",
+        "status": "operational" if cal else "not_initialized",
+        "event_types": ["rbi", "sebi", "expiry", "earnings", "budget", "tax"],
+        "total_events": len(cal._events) if cal else 0,
+        "api_endpoints": ["GET /api/brain/calendar/upcoming", "GET /api/brain/calendar/by-type/{type}"],
+    }
+
+
+# =====================================================================
+# Phase 3.10: SHAP Explainability
+# =====================================================================
+
+class ExplainRequest(BaseModel):
+    """Request body for model explanation."""
+    symbol: str
+    model_name: str = "xgboost_direction"
+
+
+@router.post("/explain/prediction")
+async def explain_prediction(request: ExplainRequest):
+    """
+    Generate SHAP + LIME + NL explanation for a model prediction.
+    
+    Requires the model to be trained first (via /api/brain/models/train).
+    """
+    if not brain_engine.explainability_engine:
+        raise HTTPException(status_code=503, detail="Explainability engine not initialized")
+    
+    # Get model and features from model manager
+    if not brain_engine.model_manager:
+        raise HTTPException(status_code=503, detail="Model manager not initialized")
+    
+    model_info = brain_engine.model_manager.get_model(request.model_name)
+    if not model_info:
+        raise HTTPException(status_code=404, detail=f"Model '{request.model_name}' not found")
+    
+    # Get features for the symbol
+    import numpy as np
+    try:
+        features_data = await brain_engine.feature_pipeline.compute_features(request.symbol)
+        feature_names = list(features_data.keys())
+        feature_values = np.array([list(features_data.values())])
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Could not compute features for {request.symbol}")
+    
+    result = brain_engine.explainability_engine.explain_prediction(
+        symbol=request.symbol,
+        model=model_info.get("model"),
+        model_name=request.model_name,
+        features=feature_values.flatten(),
+        feature_names=feature_names,
+    )
+    
+    # Generate NL explanation
+    await brain_engine.explainability_engine.generate_nl_explanation(result)
+    
+    return result.to_dict()
+
+
+@router.get("/phase3_10/summary")
+async def get_phase3_10_summary():
+    """Phase 3.10 summary: SHAP Explainability."""
+    return {
+        "phase": "3.10", "name": "SHAP + LIME Explainability",
+        "status": "operational" if brain_engine.explainability_engine else "not_initialized",
+        "methods": ["SHAP (TreeExplainer)", "LIME (Local Perturbation)", "Natural Language (Gemini LLM)"],
+        "compatible_models": ["xgboost_direction", "lightgbm_direction"],
+        "api_endpoints": ["POST /api/brain/explain/prediction"],
+    }
+
+
+# =====================================================================
+# Complete Phase 3 Summary
+# =====================================================================
+
+@router.get("/phase3/complete-summary")
+async def get_phase3_complete_summary():
+    """Complete Phase 3 summary across all sub-phases."""
+    return {
+        "phase": "3",
+        "name": "Advanced Analytics & Intelligence Layer",
+        "sub_phases": {
+            "3.1": {
+                "name": "HMM Market Regime Detection",
+                "status": "operational" if brain_engine.hmm_detector else "not_initialized",
+            },
+            "3.2": {
+                "name": "FinBERT Sentiment Pipeline",
+                "status": "operational" if brain_engine.sentiment_aggregator else "not_initialized",
+            },
+            "3.3": {
+                "name": "LLM Multi-Agent System (2-Tier Gemini)",
+                "status": "operational" if (brain_engine.agent_orchestrator and brain_engine.agent_orchestrator.is_available) else "not_available",
+            },
+            "3.4": {
+                "name": "Risk Management Engine",
+                "status": "operational" if brain_engine.var_calculator else "not_initialized",
+            },
+            "3.5": {
+                "name": "RAG Knowledge Base (Qdrant)",
+                "status": "operational" if (brain_engine.rag_knowledge_base and brain_engine.rag_knowledge_base.is_available) else "not_available",
+            },
+            "3.6": {
+                "name": "Corporate Governance Scoring",
+                "status": "operational" if brain_engine.governance_scorer else "not_initialized",
+            },
+            "3.7": {
+                "name": "Sector Rotation Engine",
+                "status": "operational" if brain_engine.sector_rotation else "not_initialized",
+            },
+            "3.8": {
+                "name": "Dividend Intelligence",
+                "status": "operational" if brain_engine.dividend_intelligence else "not_initialized",
+            },
+            "3.9": {
+                "name": "Regulatory Event Calendar",
+                "status": "operational" if brain_engine.regulatory_calendar else "not_initialized",
+            },
+            "3.10": {
+                "name": "SHAP + LIME Explainability",
+                "status": "operational" if brain_engine.explainability_engine else "not_initialized",
+            },
+        },
+        "total_api_endpoints": 30,
     }
 

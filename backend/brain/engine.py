@@ -84,6 +84,20 @@ class BrainEngine:
         # Phase 3.3 subsystems — LLM Multi-Agent System
         self.agent_orchestrator = None
 
+        # Phase 3.4 subsystems — Risk Management Engine
+        self.var_calculator = None
+        self.stress_test_engine = None
+        self.sebi_compliance = None
+        self.hrp_optimizer = None
+
+        # Phase 3.5-3.10 subsystems
+        self.rag_knowledge_base = None
+        self.governance_scorer = None
+        self.sector_rotation = None
+        self.dividend_intelligence = None
+        self.regulatory_calendar = None
+        self.explainability_engine = None
+
         # Phase 3 subsystems
         self.hmm_detector = None
         self.kmeans_detector = None
@@ -167,6 +181,12 @@ class BrainEngine:
         # 13. Initialize LLM Multi-Agent System (Phase 3.3)
         await self._start_agent_system()
 
+        # 14. Initialize Risk Management Engine (Phase 3.4)
+        await self._start_risk_engine()
+
+        # 15. Initialize remaining Phase 3 subsystems (3.5-3.10)
+        await self._start_phase3_remaining()
+
         self._started = True
         logger.info("=" * 60)
         logger.info("Stock Pulse Brain READY — Phase 1+2+3 Active")
@@ -187,6 +207,16 @@ class BrainEngine:
         logger.info("  Social Scraper:   %s", "✅" if self.social_scraper else "❌")
         logger.info("  Earnings Analyzer:%s", "✅" if self.earnings_analyzer else "❌")
         logger.info("  Agent Orchestrator: %s", "✅" if self.agent_orchestrator else "❌")
+        logger.info("  VaR Calculator:   %s", "✅" if self.var_calculator else "❌")
+        logger.info("  Stress Testing:   %s", "✅" if self.stress_test_engine else "❌")
+        logger.info("  SEBI Compliance:  %s", "✅" if self.sebi_compliance else "❌")
+        logger.info("  HRP Optimizer:    %s", "✅" if self.hrp_optimizer else "❌")
+        logger.info("  RAG Knowledge:    %s", "✅" if (self.rag_knowledge_base and self.rag_knowledge_base.is_available) else "❌")
+        logger.info("  Governance Score: %s", "✅" if self.governance_scorer else "❌")
+        logger.info("  Sector Rotation:  %s", "✅" if self.sector_rotation else "❌")
+        logger.info("  Dividend Intel:   %s", "✅" if self.dividend_intelligence else "❌")
+        logger.info("  Reg. Calendar:    %s", "✅" if self.regulatory_calendar else "❌")
+        logger.info("  Explainability:   %s", "✅" if self.explainability_engine else "❌")
         logger.info("=" * 60)
 
     async def stop(self):
@@ -1134,14 +1164,9 @@ class BrainEngine:
             return {"error": "Agent orchestrator not initialized"}
 
         try:
-            # Build context from brain subsystems
             ctx = context or {}
-
-            # Add regime info
             if self._current_regime:
                 ctx["regime"] = self._current_regime.value
-
-            # Add sentiment if available
             if self.sentiment_aggregator and symbol != "MARKET":
                 try:
                     sent = self.sentiment_aggregator._cache.get(symbol)
@@ -1157,6 +1182,121 @@ class BrainEngine:
         except Exception as e:
             logger.exception(f"Agent analysis failed for {symbol}")
             return {"error": str(e)}
+
+    # -----------------------------------------------------------------------
+    # Phase 3.4: Risk Management Engine
+    # -----------------------------------------------------------------------
+
+    async def _start_risk_engine(self):
+        """Initialize the risk management engine."""
+        try:
+            from brain.risk.var_calculator import VaRCalculator
+            from brain.risk.stress_testing import StressTestEngine
+            from brain.risk.sebi_compliance import SEBIComplianceEngine
+            from brain.risk.hrp_portfolio import HRPOptimizer
+
+            self.var_calculator = VaRCalculator(confidence=0.95, mc_simulations=10000)
+            self.stress_test_engine = StressTestEngine()
+            self.sebi_compliance = SEBIComplianceEngine()
+            self.hrp_optimizer = HRPOptimizer()
+
+            logger.info("✅ Risk Management Engine: READY (VaR + Stress + SEBI + HRP)")
+
+        except Exception:
+            logger.exception("⚠️ Risk Management Engine: FAILED to initialize")
+            self.var_calculator = None
+            self.stress_test_engine = None
+            self.sebi_compliance = None
+            self.hrp_optimizer = None
+
+    async def calculate_var(self, symbol: str, returns_list: List[float], portfolio_value: float = 1000000.0) -> Dict[str, Any]:
+        """Calculate VaR using all methods."""
+        if not self.var_calculator:
+            return {"error": "VaR calculator not initialized"}
+        import numpy as np
+        returns = np.array(returns_list)
+        results = self.var_calculator.calculate(symbol, returns, portfolio_value)
+        return {method: r.to_dict() for method, r in results.items()}
+
+    async def run_stress_test(self, symbol: str, portfolio_value: float = 1000000.0, sector: str = "general") -> Dict[str, Any]:
+        """Run stress test scenarios."""
+        if not self.stress_test_engine:
+            return {"error": "Stress test engine not initialized"}
+        results = self.stress_test_engine.run_stress_test(symbol, portfolio_value, sector)
+        return {name: r.to_dict() for name, r in results.items()}
+
+    async def check_sebi_margin(self, symbol: str, trade_value: float, **kwargs) -> Dict[str, Any]:
+        """Check SEBI margin requirements."""
+        if not self.sebi_compliance:
+            return {"error": "SEBI compliance engine not initialized"}
+        result = self.sebi_compliance.calculate_margin(symbol, trade_value, **kwargs)
+        return result.to_dict()
+
+    # -----------------------------------------------------------------------
+    # Phase 3.5-3.10: Remaining subsystems
+    # -----------------------------------------------------------------------
+
+    async def _start_phase3_remaining(self):
+        """Initialize Phase 3.5 through 3.10 subsystems."""
+        # Phase 3.5: RAG Knowledge Base
+        try:
+            from brain.rag.knowledge_base import RAGKnowledgeBase
+            self.rag_knowledge_base = RAGKnowledgeBase()
+            self.rag_knowledge_base.initialize()
+            if self.rag_knowledge_base.is_available:
+                logger.info("✅ RAG Knowledge Base: READY")
+            else:
+                logger.warning("⚠️ RAG Knowledge Base: Embedder not available")
+        except Exception:
+            logger.exception("⚠️ RAG Knowledge Base: FAILED")
+            self.rag_knowledge_base = None
+
+        # Phase 3.6: Governance Scorer
+        try:
+            from brain.governance.governance_scorer import GovernanceScorer
+            self.governance_scorer = GovernanceScorer()
+            logger.info("✅ Corporate Governance Scorer: READY")
+        except Exception:
+            logger.exception("⚠️ Corporate Governance Scorer: FAILED")
+            self.governance_scorer = None
+
+        # Phase 3.7: Sector Rotation
+        try:
+            from brain.sector.sector_rotation import SectorRotationEngine
+            self.sector_rotation = SectorRotationEngine()
+            logger.info("✅ Sector Rotation Engine: READY")
+        except Exception:
+            logger.exception("⚠️ Sector Rotation Engine: FAILED")
+            self.sector_rotation = None
+
+        # Phase 3.8: Dividend Intelligence
+        try:
+            from brain.dividends.dividend_intelligence import DividendIntelligence
+            self.dividend_intelligence = DividendIntelligence()
+            logger.info("✅ Dividend Intelligence: READY")
+        except Exception:
+            logger.exception("⚠️ Dividend Intelligence: FAILED")
+            self.dividend_intelligence = None
+
+        # Phase 3.9: Regulatory Calendar
+        try:
+            from brain.calendar.regulatory_calendar import RegulatoryCalendar
+            self.regulatory_calendar = RegulatoryCalendar()
+            self.regulatory_calendar.initialize()
+            logger.info("✅ Regulatory Calendar: READY (%d events)", len(self.regulatory_calendar._events))
+        except Exception:
+            logger.exception("⚠️ Regulatory Calendar: FAILED")
+            self.regulatory_calendar = None
+
+        # Phase 3.10: Explainability Engine
+        try:
+            from brain.explainability.explainability_engine import ExplainabilityEngine
+            from brain.sentiment.llm_sentiment import analyze_deep_llm
+            self.explainability_engine = ExplainabilityEngine(llm_fn=analyze_deep_llm)
+            logger.info("✅ SHAP Explainability Engine: READY")
+        except Exception:
+            logger.exception("⚠️ SHAP Explainability Engine: FAILED")
+            self.explainability_engine = None
 
     # -----------------------------------------------------------------------
     # Kafka (original)
