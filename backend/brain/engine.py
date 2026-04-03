@@ -76,6 +76,11 @@ class BrainEngine:
         self.confidence_scorer = None
         self.backtest_engine = None
 
+        # Phase 3.2 subsystems — Sentiment Pipeline
+        self.sentiment_aggregator = None
+        self.social_scraper = None
+        self.earnings_analyzer = None
+
         # Phase 3 subsystems
         self.hmm_detector = None
         self.kmeans_detector = None
@@ -150,8 +155,11 @@ class BrainEngine:
         # 10. Initialize Backtest Engine (Phase 2)
         await self._start_backtest_engine()
 
-        # 11. Initialize Regime Detection (Phase 3)
+        # 11. Initialize Regime Detection (Phase 3.1)
         await self._start_regime_detection()
+
+        # 12. Initialize Sentiment Pipeline (Phase 3.2)
+        await self._start_sentiment_pipeline()
 
         self._started = True
         logger.info("=" * 60)
@@ -169,6 +177,9 @@ class BrainEngine:
         logger.info("  Regime Detection: %s", "✅" if self.hmm_detector else "❌")
         logger.info("  Regime Router:    %s", "✅" if self.regime_router else "❌")
         logger.info("  Position Sizer:   %s", "✅" if self.position_sizer else "❌")
+        logger.info("  Sentiment Pipeline: %s", "✅" if self.sentiment_aggregator else "❌")
+        logger.info("  Social Scraper:   %s", "✅" if self.social_scraper else "❌")
+        logger.info("  Earnings Analyzer:%s", "✅" if self.earnings_analyzer else "❌")
         logger.info("=" * 60)
 
     async def stop(self):
@@ -860,6 +871,237 @@ class BrainEngine:
         )
 
     # -----------------------------------------------------------------------
+    # Phase 3.2: Sentiment Pipeline
+    # -----------------------------------------------------------------------
+
+    async def _start_sentiment_pipeline(self):
+        """Initialize the full sentiment pipeline: FinBERT + VADER + LLM + social."""
+        try:
+            from brain.sentiment.finbert_analyzer import FinBERTAnalyzer
+            from brain.sentiment.news_scraper import NewsScraper
+            from brain.sentiment.entity_extractor import EntityExtractor
+            from brain.sentiment.sentiment_aggregator import SentimentAggregator
+            from brain.sentiment.social_scraper import SocialScraper
+            from brain.sentiment.earnings_analyzer import EarningsCallAnalyzer
+            from brain.sentiment.llm_sentiment import analyze_sentiment_llm
+
+            # Initialize components
+            analyzer = FinBERTAnalyzer(
+                use_finbert=self.config.sentiment.finbert_enabled,
+                use_indian_variant=True,
+                use_vader=self.config.sentiment.vader_enabled,
+            )
+            scraper = NewsScraper(
+                max_age_hours=self.config.sentiment.max_article_age_hours,
+                max_articles_per_source=self.config.sentiment.max_articles_per_source,
+            )
+            extractor = EntityExtractor()
+
+            # Load stock universe for entity extraction
+            universe = self._get_stock_universe()
+            if universe:
+                extractor.load_universe(universe)
+
+            # LLM sentiment function (uses Gemini Tier 2)
+            llm_fn = None
+            if self.config.sentiment.llm_enabled:
+                llm_fn = analyze_sentiment_llm
+
+            # Event bus
+            event_bus = None
+            try:
+                from brain.event_bus import get_event_bus
+                eb = get_event_bus()
+                if eb and eb.is_running:
+                    event_bus = eb
+            except Exception:
+                pass
+
+            # Create aggregator
+            self.sentiment_aggregator = SentimentAggregator(
+                scraper=scraper,
+                analyzer=analyzer,
+                extractor=extractor,
+                event_bus=event_bus,
+                llm_sentiment_fn=llm_fn,
+                half_life_hours=self.config.sentiment.half_life_hours,
+            )
+
+            # Initialize aggregator (loads stock universe, pre-loads models in background)
+            self.sentiment_aggregator.initialize(stock_universe=universe)
+
+            # Social scraper
+            self.social_scraper = SocialScraper()
+
+            # Earnings call analyzer
+            self.earnings_analyzer = EarningsCallAnalyzer(
+                finbert_analyzer=analyzer,
+                llm_fn=None,  # Will be connected when LLM agents are ready
+            )
+
+            logger.info("✅ Sentiment Pipeline: READY (FinBERT=%s, VADER=%s, LLM=%s, Social=%s)",
+                        self.config.sentiment.finbert_enabled,
+                        self.config.sentiment.vader_enabled,
+                        self.config.sentiment.llm_enabled,
+                        "✅")
+
+        except Exception:
+            logger.exception("⚠️ Sentiment Pipeline: FAILED to initialize")
+            self.sentiment_aggregator = None
+            self.social_scraper = None
+            self.earnings_analyzer = None
+
+    def _get_stock_universe(self) -> Dict[str, str]:
+        """Get stock universe for entity extraction from known NIFTY stocks."""
+        return {
+            "RELIANCE": "Reliance Industries Ltd",
+            "TCS": "Tata Consultancy Services Ltd",
+            "HDFCBANK": "HDFC Bank Ltd",
+            "INFY": "Infosys Ltd",
+            "ICICIBANK": "ICICI Bank Ltd",
+            "HINDUNILVR": "Hindustan Unilever Ltd",
+            "SBIN": "State Bank of India",
+            "BHARTIARTL": "Bharti Airtel Ltd",
+            "ITC": "ITC Ltd",
+            "KOTAKBANK": "Kotak Mahindra Bank Ltd",
+            "LT": "Larsen & Toubro Ltd",
+            "AXISBANK": "Axis Bank Ltd",
+            "WIPRO": "Wipro Ltd",
+            "HCLTECH": "HCL Technologies Ltd",
+            "ASIANPAINT": "Asian Paints Ltd",
+            "MARUTI": "Maruti Suzuki India Ltd",
+            "TITAN": "Titan Company Ltd",
+            "SUNPHARMA": "Sun Pharmaceutical Industries Ltd",
+            "BAJFINANCE": "Bajaj Finance Ltd",
+            "TATAMOTORS": "Tata Motors Ltd",
+            "TATASTEEL": "Tata Steel Ltd",
+            "NTPC": "NTPC Ltd",
+            "POWERGRID": "Power Grid Corporation of India Ltd",
+            "ONGC": "Oil & Natural Gas Corporation Ltd",
+            "TECHM": "Tech Mahindra Ltd",
+            "ULTRACEMCO": "UltraTech Cement Ltd",
+            "NESTLEIND": "Nestle India Ltd",
+            "DRREDDY": "Dr. Reddy's Laboratories Ltd",
+            "ADANIENT": "Adani Enterprises Ltd",
+            "ADANIPORTS": "Adani Ports & Special Economic Zone Ltd",
+            "BAJAJFINSV": "Bajaj Finserv Ltd",
+            "COALINDIA": "Coal India Ltd",
+            "BRITANNIA": "Britannia Industries Ltd",
+            "CIPLA": "Cipla Ltd",
+            "GRASIM": "Grasim Industries Ltd",
+            "DIVISLAB": "Divi's Laboratories Ltd",
+            "INDUSINDBK": "IndusInd Bank Ltd",
+            "EICHERMOT": "Eicher Motors Ltd",
+            "HEROMOTOCO": "Hero MotoCorp Ltd",
+            "JSWSTEEL": "JSW Steel Ltd",
+            "HINDALCO": "Hindalco Industries Ltd",
+            "BAJAJ-AUTO": "Bajaj Auto Ltd",
+            "VEDL": "Vedanta Ltd",
+            "ZOMATO": "Zomato Ltd",
+            "TATAPOWER": "Tata Power Company Ltd",
+            "IRCTC": "Indian Railway Catering and Tourism Corporation Ltd",
+            "ADANIGREEN": "Adani Green Energy Ltd",
+            "M&M": "Mahindra & Mahindra Ltd",
+            "PAYTM": "One 97 Communications Ltd",
+        }
+
+    # -----------------------------------------------------------------------
+    # Phase 3.2: Sentiment API helpers
+    # -----------------------------------------------------------------------
+
+    async def get_sentiment(self, symbol: str, force_refresh: bool = False) -> Dict[str, Any]:
+        """Get sentiment for a symbol via the aggregator."""
+        if not self.sentiment_aggregator:
+            return {"error": "Sentiment pipeline not initialized"}
+        
+        try:
+            result = await self.sentiment_aggregator.compute_sentiment(symbol, force_refresh=force_refresh)
+            return result.to_dict()
+        except Exception as e:
+            logger.exception("Error computing sentiment for %s", symbol)
+            return {"error": str(e)}
+
+    async def get_market_sentiment(self) -> Dict[str, Any]:
+        """Get market-wide sentiment."""
+        if not self.sentiment_aggregator:
+            return {"error": "Sentiment pipeline not initialized"}
+        
+        try:
+            result = await self.sentiment_aggregator.compute_market_sentiment()
+            return result.to_dict()
+        except Exception as e:
+            logger.exception("Error computing market sentiment")
+            return {"error": str(e)}
+
+    async def get_social_sentiment(self, symbol: Optional[str] = None) -> Dict[str, Any]:
+        """Get social media sentiment."""
+        if not self.social_scraper:
+            return {"error": "Social scraper not initialized"}
+        
+        try:
+            if symbol:
+                posts = await self.social_scraper.fetch_for_symbol(symbol)
+            else:
+                posts = await self.social_scraper.fetch_all()
+            
+            # Analyze sentiment of social posts
+            if posts and self.sentiment_aggregator:
+                texts = [p.raw_text for p in posts if p.raw_text]
+                if texts:
+                    from brain.sentiment.finbert_analyzer import _vader_analyze
+                    vader_results = _vader_analyze(texts[:30])
+                    
+                    avg_score = sum(r.score for r in vader_results) / len(vader_results) if vader_results else 0.0
+                    
+                    return {
+                        "symbol": symbol or "ALL",
+                        "post_count": len(posts),
+                        "sentiment_score": round(avg_score, 4),
+                        "label": "positive" if avg_score > 0.1 else "negative" if avg_score < -0.1 else "neutral",
+                        "top_posts": [
+                            {
+                                "title": p.title[:100],
+                                "source": f"{p.source}/{p.subreddit}" if p.subreddit else p.source,
+                                "score": p.score,
+                                "url": p.url,
+                                "symbols": p.symbols[:5],
+                            }
+                            for p in posts[:10]
+                        ],
+                        "sources": self.social_scraper.get_stats().get("sources", {}),
+                    }
+            
+            return {
+                "symbol": symbol or "ALL",
+                "post_count": len(posts),
+                "sentiment_score": 0.0,
+                "label": "neutral",
+                "top_posts": [
+                    {"title": p.title[:100], "source": p.source, "score": p.score}
+                    for p in posts[:10]
+                ],
+            }
+        except Exception as e:
+            logger.exception("Error computing social sentiment")
+            return {"error": str(e)}
+
+    async def analyze_earnings_call(
+        self, symbol: str, transcript: str, quarter: str = ""
+    ) -> Dict[str, Any]:
+        """Analyze an earnings call transcript."""
+        if not self.earnings_analyzer:
+            return {"error": "Earnings analyzer not initialized"}
+        
+        try:
+            result = self.earnings_analyzer.analyze_transcript(
+                symbol=symbol, transcript=transcript, quarter=quarter
+            )
+            return result.to_dict()
+        except Exception as e:
+            logger.exception("Error analyzing earnings call for %s", symbol)
+            return {"error": str(e)}
+
+    # -----------------------------------------------------------------------
     # Kafka (original)
     # -----------------------------------------------------------------------
 
@@ -1335,6 +1577,31 @@ class BrainEngine:
             }
         else:
             health["subsystems"]["position_sizer"] = {"status": "not_initialized"}
+
+        # Phase 3.2: Sentiment Pipeline
+        if self.sentiment_aggregator:
+            health["subsystems"]["sentiment_pipeline"] = {
+                "status": "healthy",
+                "stats": self.sentiment_aggregator.get_stats(),
+            }
+        else:
+            health["subsystems"]["sentiment_pipeline_phase3"] = {"status": "not_initialized"}
+
+        if self.social_scraper:
+            health["subsystems"]["social_scraper"] = {
+                "status": "healthy",
+                "stats": self.social_scraper.get_stats(),
+            }
+        else:
+            health["subsystems"]["social_scraper"] = {"status": "not_initialized"}
+
+        if self.earnings_analyzer:
+            health["subsystems"]["earnings_analyzer"] = {
+                "status": "healthy",
+                "stats": self.earnings_analyzer.get_stats(),
+            }
+        else:
+            health["subsystems"]["earnings_analyzer"] = {"status": "not_initialized"}
 
         # Overall status
         initialized_count = sum(

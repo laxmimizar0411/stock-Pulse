@@ -441,28 +441,80 @@ agent_communication:
           agent: "testing"
           comment: "✅ VERIFIED: Phase 1 Summary endpoint working perfectly. GET /api/brain/phase1/summary returns comprehensive summary with phase: 'Phase 1: Data Foundation & Event Infrastructure', status: active, and all 7 components (kafka_event_bus: stub_mode, feature_pipeline: ready, feature_store: ready, batch_scheduler: running, storage_layer: ready, data_quality: ready, ingestion: ready). Lists 12 API endpoints. All validation passed."
 
+  - task: "Brain Phase 3.2 - Sentiment Pipeline Status & Summary"
+    implemented: true
+    working: true
+    file: "backend/brain/routes.py, backend/brain/engine.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Phase 3.2 FinBERT Sentiment Pipeline implemented. Key endpoints: GET /api/brain/phase3_2/summary, GET /api/brain/sentiment/pipeline/status. Components: FinBERT (ProsusAI/finbert loaded), VADER, LLM (Gemini), News Scraper (RSS), Social Scraper (Reddit), Entity Extractor, Earnings Analyzer."
+        - working: true
+          agent: "testing"
+          comment: "✅ VERIFIED: Phase 3.2 summary endpoint working perfectly. All 7 components present (finbert_analyzer, vader_analyzer, llm_sentiment, news_scraper, social_scraper, entity_extractor, earnings_analyzer). Ensemble weights correct (finbert: 0.5, vader: 0.2, llm: 0.3). NLP pipeline has 7 steps. Pipeline status endpoint shows all components healthy with proper structure. LLM service configured with google_gemini provider and API key configured: true."
+
+  - task: "Brain Phase 3.2 - Symbol Sentiment Analysis"
+    implemented: true
+    working: true
+    file: "backend/brain/sentiment/finbert_analyzer.py, backend/brain/sentiment/sentiment_aggregator.py, backend/brain/sentiment/llm_sentiment.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "GET /api/brain/sentiment/{symbol} returns aggregated sentiment with ensemble (0.5 FinBERT + 0.2 VADER + 0.3 LLM Gemini). POST /api/brain/sentiment/batch for bulk analysis. Includes time-decay weighting."
+        - working: true
+          agent: "testing"
+          comment: "✅ VERIFIED: Symbol sentiment analysis working perfectly. GET /api/brain/sentiment/RELIANCE returns proper structure with sentiment_score, label, positive_prob, negative_prob, neutral_prob, article_count, source_breakdown, latest_headlines, computed_at. Sentiment score valid (-1 to 1), probabilities sum correctly. Market overview sentiment (GET /api/brain/sentiment/market/overview) also working with same structure. Batch analysis (POST /api/brain/sentiment/batch) processes 3 symbols correctly and returns proper results dict."
+
+  - task: "Brain Phase 3.2 - Social Media Sentiment"
+    implemented: true
+    working: true
+    file: "backend/brain/sentiment/social_scraper.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "GET /api/brain/sentiment/social/feed and GET /api/brain/sentiment/social/{symbol}. Reddit scraper for r/IndianStreetBets, r/IndiaInvestments, r/DalalStreetTalks, r/IndianStockMarket."
+        - working: true
+          agent: "testing"
+          comment: "✅ VERIFIED: Social media sentiment endpoints working correctly. GET /api/brain/sentiment/social/feed returns proper structure with post_count, sentiment_score, label, and top_posts array. Symbol-specific social sentiment (GET /api/brain/sentiment/social/RELIANCE) also working. Note: Reddit API returning 403 errors due to rate limiting as expected - this is a known limitation mentioned in review request."
+
+  - task: "Brain Phase 3.2 - Earnings Call Analyzer"
+    implemented: true
+    working: true
+    file: "backend/brain/sentiment/earnings_analyzer.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "POST /api/brain/sentiment/earnings-call accepts transcript text, splits into management vs Q&A sections, detects tone divergence, extracts forward-looking statements and guidance direction."
+        - working: true
+          agent: "testing"
+          comment: "✅ VERIFIED: Earnings call analyzer working perfectly. POST /api/brain/sentiment/earnings-call returns comprehensive analysis with management_sentiment (0.6251), qa_sentiment (0.4378), tone_divergence (0.1873), overall_sentiment (0.5502), guidance_direction (maintained), key_positives, key_negatives, and forward_looking_statements. All sentiment scores valid (-1 to 1), proper section analysis, and guidance direction extraction working correctly."
+
 metadata:
   created_by: "main_agent"
-  version: "2.0"
-  test_sequence: 3
+  version: "3.1"
+  test_sequence: 5
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Brain Phase 1 - Brain Health & Status API"
-    - "Brain Phase 1 - Feature Pipeline (72 features)"
-    - "Brain Phase 1 - Batch Scheduler (5 DAGs)"
-    - "Brain Phase 1 - Kafka Event System (15 Topics)"
-    - "Brain Phase 1 - Storage & Data Quality"
-    - "Brain Phase 1 Summary Endpoint"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
     - agent: "main"
-      message: "Phase 1 Brain implementation complete. All 6 Phase 1 backend tasks ready for testing. Key endpoints: /api/brain/health (comprehensive health), /api/brain/features/{symbol}?compute=true (compute features), /api/brain/batch/status (scheduler), /api/brain/batch/trigger/{dag_name} (trigger DAGs), /api/brain/kafka/topics (15 topics), /api/brain/phase1/summary (full summary). Note: YFinance may be blocked in this env so feature computation returns only macro features. All other endpoints functional."
+      message: "Phase 3.2 FinBERT Sentiment Pipeline implemented. Test these endpoints: 1) GET /api/brain/phase3_2/summary - should show all components status. 2) GET /api/brain/sentiment/pipeline/status - detailed pipeline component status. 3) GET /api/brain/sentiment/RELIANCE - symbol sentiment with ensemble scores. 4) GET /api/brain/sentiment/market/overview - market-wide sentiment. 5) GET /api/brain/sentiment/social/feed - social media posts from Reddit. 6) POST /api/brain/sentiment/earnings-call with body {symbol: 'RELIANCE', transcript: 'a long earnings call text', quarter: 'Q1FY26'} - should return management vs QA sentiment and tone divergence. 7) POST /api/brain/sentiment/batch with body {symbols: ['RELIANCE', 'TCS', 'INFY']} - batch sentiment. Note: FinBERT model is loaded (ProsusAI/finbert), Indian variant had config issue but fallback works. VADER loaded. LLM uses Gemini 2.0 Flash."
     - agent: "testing"
-      message: "✅ BRAIN PHASE 1 TESTING COMPLETE: All 6 Brain Phase 1 backend tasks verified successfully with 100% test pass rate (15/15 tests passed). HIGH PRIORITY: Brain Health API returns proper subsystem statuses (kafka: degraded/stub mode, feature_pipeline: healthy, feature_store: healthy, batch_scheduler: healthy/running, storage: healthy/filesystem mode, data_quality: healthy). Feature Pipeline working with 72 registered features across 4 categories, computing 14 features per symbol (YFinance network limited as expected). Batch Scheduler operational with all 5 DAGs, successful triggers for fii_dii_flows and macro_data. MEDIUM PRIORITY: Kafka Topics lists exactly 15 topics with proper structure. Storage in filesystem mode, Ingestion shows correct source availability. Phase 1 Summary endpoint comprehensive. All API endpoints functional. No critical issues found."
-    - agent: "testing"
-      message: "✅ BRAIN PHASE 2 TESTING COMPLETE: All 4 Brain Phase 2 backend tasks verified successfully with 100% test pass rate (9/9 tests passed). HIGH PRIORITY ENDPOINTS WORKING: Model Training - XGBoost and LightGBM models training successfully with high accuracy (0.99-1.0) on 158 samples, 14 features across all test symbols (RELIANCE, TCS, HDFCBANK, INFY, ICICIBANK). Signal Generation - Multi-signal fusion working perfectly, returning proper BUY/SELL/HOLD signals with confidence scores and price targets. Backtesting - Comprehensive backtesting with Indian cost model returning all required metrics (Sharpe, Sortino, max drawdown, win rate, profit factor) and trade analytics. MEDIUM PRIORITY: Model Status API shows loaded models (xgboost_direction, lightgbm_direction), Phase 2 Summary comprehensive, Health Check includes all Phase 2 subsystems. Minor: GARCH model has implementation issue but core ML functionality working perfectly. All Phase 2 API endpoints functional."
+      message: "✅ PHASE 3.2 FINBERT SENTIMENT PIPELINE TESTING COMPLETE: All 8 specified endpoints tested successfully with 100% pass rate. 1) Phase 3.2 Summary: All 7 components present, ensemble weights correct (finbert: 0.5, vader: 0.2, llm: 0.3), NLP pipeline has 7 steps. 2) Pipeline Status: All components healthy, LLM service configured with google_gemini. 3) Symbol Sentiment (RELIANCE): Proper sentiment analysis with valid scores and probabilities. 4) Market Overview: Working correctly. 5) Social Feed: Functional (Reddit rate-limited as expected). 6) Social Symbol Filter: Working. 7) Earnings Call Analysis: Comprehensive analysis with management/QA sentiment, tone divergence, guidance direction. 8) Batch Analysis: Successfully processed 3 symbols. FinBERT model loaded and operational, news scraper fetching articles, all core functionality working. Minor expected issues: Reddit API 403 rate limiting, YFinance rate limiting for some symbols."

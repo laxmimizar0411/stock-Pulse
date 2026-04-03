@@ -830,6 +830,374 @@ class StockAnalysisPlatformTester:
         print(f"\n✅ Data extraction pipeline API test completed")
         print("-" * 40)
 
+    def test_brain_phase3_2_sentiment_endpoints(self):
+        """Test Brain Phase 3.2 FinBERT Sentiment Pipeline endpoints as specified in review request"""
+        print("\n" + "="*60)
+        print("TESTING BRAIN PHASE 3.2 - FINBERT SENTIMENT PIPELINE")
+        print("="*60)
+        
+        # =================================================================
+        # TEST 1: Phase 3.2 Summary - GET /api/brain/phase3_2/summary
+        # =================================================================
+        print(f"\n📋 Testing Phase 3.2 Summary - GET /api/brain/phase3_2/summary")
+        print("-" * 50)
+        
+        success, summary_result = self.run_test("Phase 3.2 Summary", "GET", "brain/phase3_2/summary", 200)
+        
+        if success and summary_result:
+            print(f"✅ Phase 3.2 summary endpoint successful")
+            
+            # Verify summary structure
+            required_summary_fields = ["phase", "status", "components", "ensemble_weights", "nlp_pipeline"]
+            summary_valid = True
+            
+            for field in required_summary_fields:
+                if field not in summary_result:
+                    print(f"❌ Missing field in summary: {field}")
+                    summary_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check components - should have all 7 components
+            components = summary_result.get("components", {})
+            expected_components = ["finbert_analyzer", "vader_analyzer", "llm_sentiment", "news_scraper", "social_scraper", "entity_extractor", "earnings_analyzer"]
+            
+            for component in expected_components:
+                if component in components:
+                    print(f"✅ Component found: {component}")
+                else:
+                    print(f"❌ Missing component: {component}")
+                    summary_valid = False
+            
+            # Check ensemble weights
+            ensemble_weights = summary_result.get("ensemble_weights", {})
+            expected_weights = {"finbert": 0.50, "vader": 0.20, "llm": 0.30}
+            
+            for model, expected_weight in expected_weights.items():
+                actual_weight = ensemble_weights.get(model)
+                if actual_weight == expected_weight:
+                    print(f"✅ Ensemble weight correct: {model} = {actual_weight}")
+                else:
+                    print(f"❌ Ensemble weight incorrect: {model} expected {expected_weight}, got {actual_weight}")
+                    summary_valid = False
+            
+            # Check nlp_pipeline has 7 steps
+            nlp_pipeline = summary_result.get("nlp_pipeline", {})
+            if isinstance(nlp_pipeline, dict):
+                steps = nlp_pipeline.get("steps", [])
+                if len(steps) == 7:
+                    print(f"✅ NLP pipeline has correct 7 steps")
+                else:
+                    print(f"❌ NLP pipeline should have 7 steps, got {len(steps)}")
+                    summary_valid = False
+            elif isinstance(nlp_pipeline, list):
+                if len(nlp_pipeline) == 7:
+                    print(f"✅ NLP pipeline has correct 7 steps")
+                else:
+                    print(f"❌ NLP pipeline should have 7 steps, got {len(nlp_pipeline)}")
+                    summary_valid = False
+            else:
+                print(f"❌ NLP pipeline should be dict or list, got {type(nlp_pipeline)}")
+                summary_valid = False
+            
+            if summary_valid:
+                print(f"✅ Phase 3.2 summary validation passed")
+        
+        # =================================================================
+        # TEST 2: Sentiment Pipeline Status - GET /api/brain/sentiment/pipeline/status
+        # =================================================================
+        print(f"\n🔍 Testing Sentiment Pipeline Status - GET /api/brain/sentiment/pipeline/status")
+        print("-" * 50)
+        
+        success, status_result = self.run_test("Sentiment Pipeline Status", "GET", "brain/sentiment/pipeline/status", 200)
+        
+        if success and status_result:
+            print(f"✅ Sentiment pipeline status endpoint successful")
+            
+            # Check if components are nested under "components" key
+            components = status_result.get("components", status_result)
+            
+            # Verify status structure
+            required_status_fields = ["aggregator", "news_scraper", "social_scraper", "earnings_analyzer", "llm_service"]
+            status_valid = True
+            
+            for field in required_status_fields:
+                if field not in components:
+                    print(f"❌ Missing component in status: {field}")
+                    status_valid = False
+                else:
+                    print(f"✅ Found component: {field}")
+            
+            # Check llm_service details
+            llm_service = components.get("llm_service", {})
+            if llm_service:
+                provider = llm_service.get("provider")
+                api_key_configured = llm_service.get("api_key_configured")
+                
+                if provider == "google_gemini":
+                    print(f"✅ LLM provider correct: {provider}")
+                else:
+                    print(f"❌ LLM provider incorrect: expected google_gemini, got {provider}")
+                    status_valid = False
+                
+                if api_key_configured is True:
+                    print(f"✅ API key configured: {api_key_configured}")
+                else:
+                    print(f"❌ API key not configured: {api_key_configured}")
+                    status_valid = False
+            
+            if status_valid:
+                print(f"✅ Sentiment pipeline status validation passed")
+        
+        # =================================================================
+        # TEST 3: Symbol Sentiment Analysis - GET /api/brain/sentiment/RELIANCE
+        # =================================================================
+        print(f"\n📈 Testing Symbol Sentiment Analysis - GET /api/brain/sentiment/RELIANCE")
+        print("-" * 50)
+        
+        success, sentiment_result = self.run_test("Symbol Sentiment - RELIANCE", "GET", "brain/sentiment/RELIANCE", 200)
+        
+        if success and sentiment_result:
+            print(f"✅ Symbol sentiment analysis successful for RELIANCE")
+            
+            # Verify sentiment result structure
+            required_sentiment_fields = ["sentiment_score", "label", "positive_prob", "negative_prob", "neutral_prob", "article_count", "source_breakdown", "latest_headlines", "computed_at"]
+            sentiment_valid = True
+            
+            for field in required_sentiment_fields:
+                if field not in sentiment_result:
+                    print(f"❌ Missing field in sentiment result: {field}")
+                    sentiment_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check sentiment_score is between -1 and 1
+            sentiment_score = sentiment_result.get("sentiment_score")
+            if sentiment_score is not None and -1 <= sentiment_score <= 1:
+                print(f"✅ Valid sentiment score: {sentiment_score}")
+            else:
+                print(f"❌ Invalid sentiment score: {sentiment_score}")
+                sentiment_valid = False
+            
+            # Check label is valid
+            label = sentiment_result.get("label")
+            valid_labels = ["positive", "negative", "neutral"]
+            if label in valid_labels:
+                print(f"✅ Valid sentiment label: {label}")
+            else:
+                print(f"❌ Invalid sentiment label: {label}")
+                sentiment_valid = False
+            
+            # Check probabilities sum to ~1
+            pos_prob = sentiment_result.get("positive_prob", 0)
+            neg_prob = sentiment_result.get("negative_prob", 0)
+            neu_prob = sentiment_result.get("neutral_prob", 0)
+            prob_sum = pos_prob + neg_prob + neu_prob
+            
+            if 0.95 <= prob_sum <= 1.05:  # Allow small floating point errors
+                print(f"✅ Valid probability distribution: {prob_sum:.3f}")
+            else:
+                print(f"❌ Invalid probability distribution sum: {prob_sum}")
+                sentiment_valid = False
+            
+            if sentiment_valid:
+                print(f"✅ Symbol sentiment analysis validation passed")
+        
+        # =================================================================
+        # TEST 4: Market Overview Sentiment - GET /api/brain/sentiment/market/overview
+        # =================================================================
+        print(f"\n🌍 Testing Market Overview Sentiment - GET /api/brain/sentiment/market/overview")
+        print("-" * 50)
+        
+        success, market_result = self.run_test("Market Overview Sentiment", "GET", "brain/sentiment/market/overview", 200)
+        
+        if success and market_result:
+            print(f"✅ Market overview sentiment successful")
+            
+            # Should have similar structure to symbol sentiment but for "MARKET"
+            market_valid = True
+            
+            for field in required_sentiment_fields:
+                if field not in market_result:
+                    print(f"❌ Missing field in market sentiment: {field}")
+                    market_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            if market_valid:
+                print(f"✅ Market overview sentiment validation passed")
+        
+        # =================================================================
+        # TEST 5: Social Media Feed - GET /api/brain/sentiment/social/feed
+        # =================================================================
+        print(f"\n📱 Testing Social Media Feed - GET /api/brain/sentiment/social/feed")
+        print("-" * 50)
+        
+        success, social_result = self.run_test("Social Media Feed", "GET", "brain/sentiment/social/feed", 200)
+        
+        if success and social_result:
+            print(f"✅ Social media feed successful")
+            
+            # Verify social feed structure
+            required_social_fields = ["post_count", "sentiment_score", "label"]
+            social_valid = True
+            
+            for field in required_social_fields:
+                if field not in social_result:
+                    print(f"❌ Missing field in social feed: {field}")
+                    social_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check for optional top_posts array
+            if "top_posts" in social_result:
+                top_posts = social_result["top_posts"]
+                if isinstance(top_posts, list):
+                    print(f"✅ Top posts array found with {len(top_posts)} posts")
+                else:
+                    print(f"❌ Top posts should be array, got {type(top_posts)}")
+                    social_valid = False
+            
+            if social_valid:
+                print(f"✅ Social media feed validation passed")
+        
+        # =================================================================
+        # TEST 6: Social Media Symbol Filter - GET /api/brain/sentiment/social/RELIANCE
+        # =================================================================
+        print(f"\n📱 Testing Social Media Symbol Filter - GET /api/brain/sentiment/social/RELIANCE")
+        print("-" * 50)
+        
+        success, social_symbol_result = self.run_test("Social Media Symbol - RELIANCE", "GET", "brain/sentiment/social/RELIANCE", 200)
+        
+        if success and social_symbol_result:
+            print(f"✅ Social media symbol filter successful for RELIANCE")
+            
+            # Should have similar structure to general social feed
+            social_symbol_valid = True
+            
+            for field in required_social_fields:
+                if field not in social_symbol_result:
+                    print(f"❌ Missing field in social symbol result: {field}")
+                    social_symbol_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            if social_symbol_valid:
+                print(f"✅ Social media symbol filter validation passed")
+        
+        # =================================================================
+        # TEST 7: Earnings Call Analysis - POST /api/brain/sentiment/earnings-call
+        # =================================================================
+        print(f"\n💼 Testing Earnings Call Analysis - POST /api/brain/sentiment/earnings-call")
+        print("-" * 50)
+        
+        earnings_data = {
+            "symbol": "RELIANCE",
+            "transcript": "Good evening, ladies and gentlemen. Welcome to Reliance Industries Q1 FY26 earnings conference call. We are pleased to report strong quarterly performance. Revenue grew by 15% year-over-year driven by robust demand across our retail and digital segments. EBITDA margin expanded by 200 basis points to 32%. Our Jio platform now serves over 480 million subscribers. The petrochemicals segment saw improvement despite global headwinds. Management expects continued growth momentum in the coming quarters with capex plans of Rs 75,000 crores. Question and Answer Session: Analyst from Morgan Stanley: Can you provide guidance on margin sustainability given rising crude prices? Management: We remain confident in our margin trajectory. The downstream integration provides natural hedging. Analyst from Goldman Sachs: What is the outlook for new energy business? Management: Our new energy investments are on track. We expect the green hydrogen facility to be operational by FY27.",
+            "quarter": "Q1FY26"
+        }
+        
+        success, earnings_result = self.run_test("Earnings Call Analysis", "POST", "brain/sentiment/earnings-call", 200, data=earnings_data)
+        
+        if success and earnings_result:
+            print(f"✅ Earnings call analysis successful")
+            
+            # Verify earnings result structure
+            required_earnings_fields = ["management_sentiment", "qa_sentiment", "tone_divergence", "overall_sentiment", "guidance_direction", "key_positives", "key_negatives", "forward_looking_statements"]
+            earnings_valid = True
+            
+            for field in required_earnings_fields:
+                if field not in earnings_result:
+                    print(f"❌ Missing field in earnings result: {field}")
+                    earnings_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check sentiment scores are valid
+            mgmt_sentiment = earnings_result.get("management_sentiment")
+            qa_sentiment = earnings_result.get("qa_sentiment")
+            overall_sentiment = earnings_result.get("overall_sentiment")
+            
+            for sentiment_name, sentiment_value in [("management", mgmt_sentiment), ("qa", qa_sentiment), ("overall", overall_sentiment)]:
+                if sentiment_value is not None and -1 <= sentiment_value <= 1:
+                    print(f"✅ Valid {sentiment_name} sentiment: {sentiment_value}")
+                else:
+                    print(f"❌ Invalid {sentiment_name} sentiment: {sentiment_value}")
+                    earnings_valid = False
+            
+            # Check guidance_direction is valid
+            guidance = earnings_result.get("guidance_direction")
+            valid_guidance = ["positive", "negative", "neutral", "mixed", "maintained", "raised", "lowered"]
+            if guidance in valid_guidance:
+                print(f"✅ Valid guidance direction: {guidance}")
+            else:
+                print(f"❌ Invalid guidance direction: {guidance}")
+                earnings_valid = False
+            
+            if earnings_valid:
+                print(f"✅ Earnings call analysis validation passed")
+        
+        # =================================================================
+        # TEST 8: Batch Sentiment Analysis - POST /api/brain/sentiment/batch
+        # =================================================================
+        print(f"\n📊 Testing Batch Sentiment Analysis - POST /api/brain/sentiment/batch")
+        print("-" * 50)
+        
+        batch_data = {
+            "symbols": ["RELIANCE", "TCS", "INFY"]
+        }
+        
+        success, batch_result = self.run_test("Batch Sentiment Analysis", "POST", "brain/sentiment/batch", 200, data=batch_data)
+        
+        if success and batch_result:
+            print(f"✅ Batch sentiment analysis successful")
+            
+            # Verify batch result structure
+            required_batch_fields = ["symbols_processed", "results"]
+            batch_valid = True
+            
+            for field in required_batch_fields:
+                if field not in batch_result:
+                    print(f"❌ Missing field in batch result: {field}")
+                    batch_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check symbols_processed count
+            symbols_processed = batch_result.get("symbols_processed")
+            if symbols_processed == 3:
+                print(f"✅ Correct symbols processed count: {symbols_processed}")
+            else:
+                print(f"❌ Incorrect symbols processed count: expected 3, got {symbols_processed}")
+                batch_valid = False
+            
+            # Check results dict
+            results = batch_result.get("results", {})
+            if isinstance(results, dict):
+                print(f"✅ Results dict found with {len(results)} entries")
+                
+                # Check each symbol has sentiment data
+                for symbol in ["RELIANCE", "TCS", "INFY"]:
+                    if symbol in results:
+                        symbol_result = results[symbol]
+                        if "sentiment_score" in symbol_result and "label" in symbol_result:
+                            print(f"✅ Valid sentiment data for {symbol}")
+                        else:
+                            print(f"❌ Invalid sentiment data for {symbol}")
+                            batch_valid = False
+                    else:
+                        print(f"❌ Missing results for symbol: {symbol}")
+                        batch_valid = False
+            else:
+                print(f"❌ Results should be dict, got {type(results)}")
+                batch_valid = False
+            
+            if batch_valid:
+                print(f"✅ Batch sentiment analysis validation passed")
+        
+        print(f"\n✅ Brain Phase 3.2 FinBERT Sentiment Pipeline testing completed")
+        print("="*60)
+
     def test_brain_phase2_endpoints(self):
         """Test Brain Phase 2 API endpoints as specified in review request"""
         print("\n" + "="*60)
@@ -1143,8 +1511,8 @@ class StockAnalysisPlatformTester:
             # Test basic health endpoints first
             self.test_health_endpoints()
             
-            # Test Brain Phase 2 endpoints (HIGH PRIORITY)
-            self.test_brain_phase2_endpoints()
+            # Test Brain Phase 3.2 FinBERT Sentiment Pipeline endpoints (HIGH PRIORITY)
+            self.test_brain_phase3_2_sentiment_endpoints()
             
         except KeyboardInterrupt:
             print("\n⚠️  Tests interrupted by user")

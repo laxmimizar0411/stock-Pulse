@@ -79,7 +79,7 @@ class SentimentConfig:
     min_fetch_interval_minutes: int = 5      # Rate limit on RSS fetches
     finbert_enabled: bool = True             # Use FinBERT (needs transformers)
     vader_enabled: bool = True               # Use VADER (fast fallback)
-    llm_enabled: bool = False                # Use LLM for contextual sentiment
+    llm_enabled: bool = True                 # Use Gemini for contextual sentiment
     finbert_weight: float = 0.50             # Ensemble weight for FinBERT
     vader_weight: float = 0.20               # Ensemble weight for VADER
     llm_weight: float = 0.30                 # Ensemble weight for LLM
@@ -118,14 +118,17 @@ class MLSettings:
 
 @dataclass
 class LLMSettings:
-    """LLM agent settings."""
-    # Tier 1 — Deep reasoning
-    tier1_provider: str = os.getenv("LLM_TIER1_PROVIDER", "anthropic")
-    tier1_model: str = os.getenv("LLM_TIER1_MODEL", "claude-sonnet-4-20250514")
+    """LLM agent settings — using Google Gemini models."""
+    # Tier 1 — Deep reasoning (Gemini 2.5 Flash)
+    tier1_provider: str = "google"
+    tier1_model: str = os.getenv("GEMINI_TIER1_MODEL", "gemini-2.5-flash")
 
-    # Tier 2 — Quick thinking
-    tier2_provider: str = os.getenv("LLM_TIER2_PROVIDER", "openai")
-    tier2_model: str = os.getenv("LLM_TIER2_MODEL", "gpt-4.1-mini")
+    # Tier 2 — Quick extraction (Gemini 2.0 Flash — FREE tier)
+    tier2_provider: str = "google"
+    tier2_model: str = os.getenv("GEMINI_TIER2_MODEL", "gemini-2.0-flash")
+
+    # Gemini API key (loaded from env)
+    api_key: str = os.getenv("GEMINI_API_KEY", "")
 
     # Cost controls
     max_monthly_spend_usd: float = float(os.getenv("LLM_MAX_MONTHLY_SPEND", "5000"))

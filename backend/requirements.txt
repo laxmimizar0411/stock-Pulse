@@ -157,3 +157,11 @@ arch>=7.0.0
 optuna>=3.0.0
 shap>=0.43.0
 onnxruntime>=1.17.0
+
+# Phase 3.2: Sentiment Pipeline
+transformers>=4.40.0
+torch>=2.0.0
+vaderSentiment>=3.3.2
+feedparser>=6.0.0
+langdetect>=1.0.9
+deep-translator>=1.11.0

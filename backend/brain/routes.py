@@ -1,5 +1,5 @@
 """
-Brain API Routes — Phase 1+2+3: Data, ML Models, and Regime Detection.
+Brain API Routes — Phase 1+2+3: Data, ML Models, Regime Detection, and Sentiment.
 
 Phase 1 — Data Foundation:
     GET  /api/brain/health, /config, /features/{symbol}, /data-quality/{symbol}
@@ -11,11 +11,20 @@ Phase 2 — AI/ML Models:
     POST /api/brain/signals/generate, /backtest/run
     GET  /api/brain/models/status, /signals/active
 
-Phase 3 — Market Regime Detection:
+Phase 3.1 — Market Regime Detection:
     GET  /api/brain/market-regime, /market-regime/history
     POST /api/brain/market-regime/detect
     POST /api/brain/position-size/calculate
     GET  /api/brain/position-size/state, /phase3/summary
+
+Phase 3.2 — Sentiment Analysis:
+    GET  /api/brain/sentiment/{symbol}
+    GET  /api/brain/sentiment/market
+    GET  /api/brain/sentiment/social
+    GET  /api/brain/sentiment/social/{symbol}
+    POST /api/brain/sentiment/earnings-call
+    GET  /api/brain/sentiment/pipeline/status
+    GET  /api/brain/phase3_2/summary
 """
 
 import logging
@@ -804,5 +813,240 @@ async def phase3_summary():
             "POST /api/brain/position-size/calculate",
             "GET  /api/brain/position-size/state",
             "GET  /api/brain/phase3/summary",
+        ],
+    }
+
+
+
+# =====================================================================
+# Phase 3.2: Sentiment Analysis Pipeline
+# =====================================================================
+
+class EarningsCallRequest(BaseModel):
+    """Request body for earnings call analysis."""
+    symbol: str
+    transcript: str
+    quarter: str = ""
+
+class SentimentBatchRequest(BaseModel):
+    """Request body for batch sentiment analysis."""
+    symbols: List[str]
+
+
+@router.get("/sentiment/{symbol}")
+async def get_symbol_sentiment(
+    symbol: str,
+    force_refresh: bool = Query(False, description="Force fresh data fetch"),
+):
+    """
+    Get aggregated sentiment for a specific symbol.
+    
+    Ensemble: 0.50 × FinBERT + 0.20 × VADER + 0.30 × LLM (Gemini)
+    """
+    result = await brain_engine.get_sentiment(symbol, force_refresh=force_refresh)
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+@router.get("/sentiment/market/overview")
+async def get_market_sentiment():
+    """
+    Get overall market-wide sentiment aggregated from all news sources.
+    """
+    result = await brain_engine.get_market_sentiment()
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+@router.get("/sentiment/social/feed")
+async def get_social_sentiment(
+    symbol: Optional[str] = Query(None, description="Filter by symbol"),
+):
+    """
+    Get social media sentiment from Reddit (r/IndianStreetBets, r/IndiaInvestments, etc.)
+    """
+    result = await brain_engine.get_social_sentiment(symbol=symbol)
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+@router.get("/sentiment/social/{symbol}")
+async def get_social_sentiment_for_symbol(symbol: str):
+    """
+    Get social media sentiment for a specific symbol.
+    Searches Reddit for mentions of the stock.
+    """
+    result = await brain_engine.get_social_sentiment(symbol=symbol)
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+@router.post("/sentiment/earnings-call")
+async def analyze_earnings_call(request: EarningsCallRequest):
+    """
+    Analyze an earnings call transcript.
+    
+    Splits into management discussion vs Q&A sections,
+    measures tone divergence, extracts forward-looking statements.
+    """
+    if len(request.transcript) < 100:
+        raise HTTPException(status_code=400, detail="Transcript too short (min 100 chars)")
+    
+    result = await brain_engine.analyze_earnings_call(
+        symbol=request.symbol,
+        transcript=request.transcript,
+        quarter=request.quarter,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+@router.post("/sentiment/batch")
+async def compute_batch_sentiment(request: SentimentBatchRequest):
+    """
+    Compute sentiment for multiple symbols at once.
+    """
+    if not request.symbols:
+        raise HTTPException(status_code=400, detail="No symbols provided")
+    if len(request.symbols) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 symbols per batch")
+    
+    if not brain_engine.sentiment_aggregator:
+        raise HTTPException(status_code=503, detail="Sentiment pipeline not initialized")
+    
+    results = await brain_engine.sentiment_aggregator.compute_all_symbols(request.symbols)
+    return {
+        "symbols_processed": len(results),
+        "results": {sym: res.to_dict() for sym, res in results.items()},
+    }
+
+
+@router.get("/sentiment/pipeline/status")
+async def get_sentiment_pipeline_status():
+    """
+    Get status of all sentiment pipeline components.
+    """
+    from brain.sentiment.llm_sentiment import get_llm_status
+
+    components = {}
+    
+    # FinBERT / VADER analyzer status
+    if brain_engine.sentiment_aggregator:
+        stats = brain_engine.sentiment_aggregator.get_stats()
+        components["aggregator"] = {
+            "status": "healthy",
+            "cached_symbols": stats.get("cached_symbols", 0),
+            "analyzer": stats.get("analyzer", {}),
+        }
+        components["news_scraper"] = {
+            "status": "healthy",
+            "stats": stats.get("scraper", {}),
+        }
+    else:
+        components["aggregator"] = {"status": "not_initialized"}
+        components["news_scraper"] = {"status": "not_initialized"}
+    
+    # Social scraper
+    if brain_engine.social_scraper:
+        components["social_scraper"] = {
+            "status": "healthy",
+            "stats": brain_engine.social_scraper.get_stats(),
+        }
+    else:
+        components["social_scraper"] = {"status": "not_initialized"}
+    
+    # Earnings analyzer
+    if brain_engine.earnings_analyzer:
+        components["earnings_analyzer"] = {
+            "status": "healthy",
+            "stats": brain_engine.earnings_analyzer.get_stats(),
+        }
+    else:
+        components["earnings_analyzer"] = {"status": "not_initialized"}
+    
+    # LLM service
+    llm_status = await get_llm_status()
+    components["llm_service"] = llm_status
+    
+    return {
+        "pipeline": "sentiment_analysis",
+        "phase": "3.2",
+        "components": components,
+    }
+
+
+@router.get("/phase3_2/summary")
+async def get_phase3_2_summary():
+    """
+    Phase 3.2 summary: FinBERT Sentiment Pipeline status and capabilities.
+    """
+    from brain.sentiment.llm_sentiment import get_llm_status
+
+    llm_status = await get_llm_status()
+
+    return {
+        "phase": "3.2",
+        "name": "FinBERT Sentiment Pipeline",
+        "status": "operational" if brain_engine.sentiment_aggregator else "not_initialized",
+        "components": {
+            "finbert_analyzer": {
+                "status": "ready" if brain_engine.sentiment_aggregator else "not_initialized",
+                "description": "ProsusAI/finbert + Indian variant (kdave/FineTuned_Finbert)",
+                "models": ["ProsusAI/finbert", "kdave/FineTuned_Finbert"],
+            },
+            "vader_analyzer": {
+                "status": "ready" if brain_engine.sentiment_aggregator else "not_initialized",
+                "description": "VADER rule-based sentiment (fast fallback)",
+            },
+            "llm_sentiment": {
+                "status": "ready" if llm_status.get("api_key_configured") else "no_api_key",
+                "description": "Gemini LLM contextual sentiment analysis",
+                "tier2_model": llm_status.get("tier2_model", ""),
+            },
+            "news_scraper": {
+                "status": "ready" if brain_engine.sentiment_aggregator else "not_initialized",
+                "description": "RSS feeds: Moneycontrol, Economic Times, LiveMint, Business Standard",
+            },
+            "social_scraper": {
+                "status": "ready" if brain_engine.social_scraper else "not_initialized",
+                "description": "Reddit: r/IndianStreetBets, r/IndiaInvestments, r/DalalStreetTalks",
+            },
+            "entity_extractor": {
+                "status": "ready" if brain_engine.sentiment_aggregator else "not_initialized",
+                "description": "NER + symbol mapping for NIFTY 50 universe",
+            },
+            "earnings_analyzer": {
+                "status": "ready" if brain_engine.earnings_analyzer else "not_initialized",
+                "description": "Earnings call analysis with management vs Q&A tone divergence",
+            },
+        },
+        "ensemble_weights": {
+            "finbert": 0.50,
+            "vader": 0.20,
+            "llm": 0.30,
+        },
+        "nlp_pipeline": [
+            "1. Language Detection (langdetect)",
+            "2. Hindi → English Translation (deep-translator)",
+            "3. Text Cleaning / Truncation",
+            "4. FinBERT Sentiment (transformer)",
+            "5. VADER Sentiment (rule-based)",
+            "6. Gemini LLM Contextual Sentiment",
+            "7. Weighted Ensemble Aggregation with Time-Decay",
+        ],
+        "api_endpoints": [
+            "GET  /api/brain/sentiment/{symbol}",
+            "GET  /api/brain/sentiment/market/overview",
+            "GET  /api/brain/sentiment/social/feed",
+            "GET  /api/brain/sentiment/social/{symbol}",
+            "POST /api/brain/sentiment/earnings-call",
+            "POST /api/brain/sentiment/batch",
+            "GET  /api/brain/sentiment/pipeline/status",
+            "GET  /api/brain/phase3_2/summary",
         ],
     }
