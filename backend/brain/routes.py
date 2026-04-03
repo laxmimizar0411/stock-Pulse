@@ -1050,3 +1050,126 @@ async def get_phase3_2_summary():
             "GET  /api/brain/phase3_2/summary",
         ],
     }
+
+
+# =====================================================================
+# Phase 3.3: LLM Multi-Agent System
+# =====================================================================
+
+class AgentAnalysisRequest(BaseModel):
+    """Request body for multi-agent analysis."""
+    symbol: str
+    context: dict = {}
+
+
+@router.post("/agents/analyze")
+async def run_agent_analysis(request: AgentAnalysisRequest):
+    """
+    Run the full multi-agent analysis pipeline for a symbol.
+    
+    Pipeline:
+      Stage 1: 4 Analyst Agents (parallel) — Technical, Fundamental, Macro, Event-Driven
+      Stage 2: Bull/Bear Researchers (parallel)
+      Stage 3: Synthesizer — Combined recommendation
+      Stage 4: Trader Agent — Trade execution plan
+      Stage 5: Risk Agent — Review with veto power
+      Stage 6: Report Generator — Human-readable report
+    
+    Returns the complete analysis from all 10 agents.
+    """
+    result = await brain_engine.run_agent_analysis(
+        symbol=request.symbol,
+        context=request.context,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+@router.get("/agents/status")
+async def get_agent_system_status():
+    """
+    Get status of the LLM multi-agent system.
+    """
+    if not brain_engine.agent_orchestrator:
+        return {
+            "status": "not_initialized",
+            "agents_count": 0,
+        }
+    
+    stats = brain_engine.agent_orchestrator.get_stats()
+    return {
+        "status": "healthy" if brain_engine.agent_orchestrator.is_available else "no_api_key",
+        "agents_count": 10,
+        "agents": [
+            "TechnicalAnalyst", "FundamentalAnalyst", "MacroAnalyst", "EventDrivenAnalyst",
+            "BullResearcher", "BearResearcher", "Synthesizer", "Trader", "RiskAgent", "ReportGenerator",
+        ],
+        "llm_tiers": {
+            "tier1": stats.get("tier1_llm", {}),
+            "tier2": stats.get("tier2_llm", {}),
+        },
+        "orchestrator_stats": stats.get("orchestrator", {}),
+    }
+
+
+@router.get("/phase3_3/summary")
+async def get_phase3_3_summary():
+    """
+    Phase 3.3 summary: LLM Multi-Agent System status and capabilities.
+    """
+    import os
+
+    return {
+        "phase": "3.3",
+        "name": "LLM Multi-Agent System (2-Tier)",
+        "status": "operational" if (brain_engine.agent_orchestrator and brain_engine.agent_orchestrator.is_available) else "not_available",
+        "llm_config": {
+            "tier1": {
+                "provider": "google",
+                "model": os.environ.get("GEMINI_TIER1_MODEL", "gemini-2.5-flash"),
+                "use": "Deep analysis (analyst agents, synthesizer, trader, risk)",
+            },
+            "tier2": {
+                "provider": "google",
+                "model": os.environ.get("GEMINI_TIER2_MODEL", "gemini-2.0-flash"),
+                "use": "Extraction & formatting (report generator)",
+            },
+        },
+        "agents": {
+            "analyst_agents": {
+                "count": 4,
+                "list": ["TechnicalAnalyst", "FundamentalAnalyst", "MacroAnalyst", "EventDrivenAnalyst"],
+                "description": "Run in parallel, each analyzing from a different perspective",
+            },
+            "research_agents": {
+                "count": 2,
+                "list": ["BullResearcher", "BearResearcher"],
+                "description": "Present strongest case for and against the investment",
+            },
+            "decision_agents": {
+                "count": 3,
+                "list": ["Synthesizer", "Trader", "RiskAgent"],
+                "description": "Combine perspectives, plan trade, review risk (veto power)",
+            },
+            "output_agents": {
+                "count": 1,
+                "list": ["ReportGenerator"],
+                "description": "Generate human-readable investment report",
+            },
+        },
+        "pipeline_stages": [
+            "Stage 1: 4 Analyst Agents (parallel)",
+            "Stage 2: Bull/Bear Researchers (parallel)",
+            "Stage 3: Synthesizer (combine all)",
+            "Stage 4: Trader Agent (trade plan)",
+            "Stage 5: Risk Agent (veto power)",
+            "Stage 6: Report Generator (human-readable)",
+        ],
+        "api_endpoints": [
+            "POST /api/brain/agents/analyze",
+            "GET  /api/brain/agents/status",
+            "GET  /api/brain/phase3_3/summary",
+        ],
+    }
+

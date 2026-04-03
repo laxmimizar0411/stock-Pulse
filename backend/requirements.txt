@@ -165,3 +165,8 @@ vaderSentiment>=3.3.2
 feedparser>=6.0.0
 langdetect>=1.0.9
 deep-translator>=1.11.0
+
+# Phase 3.3: LLM Multi-Agent System
+langgraph>=1.0.0
+langchain-google-genai>=4.0.0
+langchain-core>=1.0.0

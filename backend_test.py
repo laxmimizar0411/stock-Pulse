@@ -1198,6 +1198,420 @@ class StockAnalysisPlatformTester:
         print(f"\n✅ Brain Phase 3.2 FinBERT Sentiment Pipeline testing completed")
         print("="*60)
 
+    def test_brain_phase3_3_multiagent_endpoints(self):
+        """Test Brain Phase 3.3 LLM Multi-Agent System endpoints as specified in review request"""
+        print("\n" + "="*60)
+        print("TESTING BRAIN PHASE 3.3 - LLM MULTI-AGENT SYSTEM")
+        print("="*60)
+        
+        # =================================================================
+        # TEST 1: Phase 3.3 Summary - GET /api/brain/phase3_3/summary
+        # =================================================================
+        print(f"\n📋 Testing Phase 3.3 Summary - GET /api/brain/phase3_3/summary")
+        print("-" * 50)
+        
+        success, summary_result = self.run_test("Phase 3.3 Summary", "GET", "brain/phase3_3/summary", 200)
+        
+        if success and summary_result:
+            print(f"✅ Phase 3.3 summary endpoint successful")
+            
+            # Verify summary structure
+            required_summary_fields = ["phase", "name", "llm_config", "agents", "pipeline_stages"]
+            summary_valid = True
+            
+            for field in required_summary_fields:
+                if field not in summary_result:
+                    print(f"❌ Missing field in summary: {field}")
+                    summary_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check phase is "3.3"
+            phase = summary_result.get("phase")
+            if phase == "3.3":
+                print(f"✅ Correct phase: {phase}")
+            else:
+                print(f"❌ Incorrect phase: expected '3.3', got '{phase}'")
+                summary_valid = False
+            
+            # Check name contains "Multi-Agent"
+            name = summary_result.get("name", "")
+            if "Multi-Agent" in name:
+                print(f"✅ Name contains 'Multi-Agent': {name}")
+            else:
+                print(f"❌ Name should contain 'Multi-Agent': {name}")
+                summary_valid = False
+            
+            # Check llm_config has tier1 and tier2
+            llm_config = summary_result.get("llm_config", {})
+            if "tier1" in llm_config and "tier2" in llm_config:
+                tier1 = llm_config["tier1"]
+                tier2 = llm_config["tier2"]
+                print(f"✅ LLM config found - Tier1: {tier1}, Tier2: {tier2}")
+                
+                # Check for expected Gemini models
+                if isinstance(tier1, dict) and tier1.get("model") == "gemini-2.5-flash":
+                    print(f"✅ Tier1 has gemini-2.5-flash")
+                elif "gemini-2.5-flash" in str(tier1):
+                    print(f"✅ Tier1 has gemini-2.5-flash")
+                else:
+                    print(f"❌ Tier1 should have gemini-2.5-flash, got: {tier1}")
+                    summary_valid = False
+                    
+                if isinstance(tier2, dict) and tier2.get("model") == "gemini-2.0-flash":
+                    print(f"✅ Tier2 has gemini-2.0-flash")
+                elif "gemini-2.0-flash" in str(tier2):
+                    print(f"✅ Tier2 has gemini-2.0-flash")
+                else:
+                    print(f"❌ Tier2 should have gemini-2.0-flash, got: {tier2}")
+                    summary_valid = False
+            else:
+                print(f"❌ LLM config missing tier1 or tier2")
+                summary_valid = False
+            
+            # Check agents section
+            agents = summary_result.get("agents", {})
+            if agents:
+                expected_agents = {
+                    "analyst_agents": 4,
+                    "research_agents": 2,
+                    "decision_agents": 3,
+                    "output_agents": 1
+                }
+                
+                total_agents = 0
+                for agent_type, expected_count in expected_agents.items():
+                    agent_info = agents.get(agent_type, {})
+                    
+                    # Handle different possible structures
+                    if isinstance(agent_info, dict):
+                        actual_count = agent_info.get("count", 0)
+                    elif isinstance(agent_info, (int, float)):
+                        actual_count = agent_info
+                    else:
+                        actual_count = 0
+                    
+                    total_agents += actual_count
+                    
+                    if actual_count == expected_count:
+                        print(f"✅ {agent_type}: {actual_count}")
+                    else:
+                        print(f"❌ {agent_type}: expected {expected_count}, got {actual_count}")
+                        summary_valid = False
+                
+                if total_agents == 10:
+                    print(f"✅ Total agents: {total_agents}")
+                else:
+                    print(f"❌ Total agents should be 10, got {total_agents}")
+                    summary_valid = False
+            else:
+                print(f"❌ Agents section missing")
+                summary_valid = False
+            
+            # Check pipeline_stages
+            pipeline_stages = summary_result.get("pipeline_stages", [])
+            if len(pipeline_stages) == 6:
+                print(f"✅ Pipeline stages count: {len(pipeline_stages)}")
+                # Handle different possible structures for stage names
+                stage_names = []
+                for stage in pipeline_stages:
+                    if isinstance(stage, dict):
+                        stage_names.append(stage.get('name', stage.get('stage', str(stage))))
+                    else:
+                        stage_names.append(str(stage))
+                print(f"   Stages: {stage_names}")
+            else:
+                print(f"❌ Pipeline stages should be 6, got {len(pipeline_stages)}")
+                summary_valid = False
+            
+            if summary_valid:
+                print(f"✅ Phase 3.3 summary validation passed")
+        
+        # =================================================================
+        # TEST 2: Agents Status - GET /api/brain/agents/status
+        # =================================================================
+        print(f"\n🤖 Testing Agents Status - GET /api/brain/agents/status")
+        print("-" * 50)
+        
+        success, status_result = self.run_test("Agents Status", "GET", "brain/agents/status", 200)
+        
+        if success and status_result:
+            print(f"✅ Agents status endpoint successful")
+            
+            # Verify status result structure
+            required_status_fields = ["status", "agents_count", "agents", "llm_tiers"]
+            status_valid = True
+            
+            for field in required_status_fields:
+                if field not in status_result:
+                    print(f"❌ Missing field in status: {field}")
+                    status_valid = False
+                else:
+                    print(f"✅ Found field: {field}")
+            
+            # Check status is "healthy"
+            status = status_result.get("status")
+            if status == "healthy":
+                print(f"✅ Status is healthy: {status}")
+            else:
+                print(f"❌ Status should be 'healthy', got: {status}")
+                status_valid = False
+            
+            # Check agents_count is 10
+            agents_count = status_result.get("agents_count")
+            if agents_count == 10:
+                print(f"✅ Agents count: {agents_count}")
+            else:
+                print(f"❌ Agents count should be 10, got: {agents_count}")
+                status_valid = False
+            
+            # Check agents list has 10 agent names
+            agents_list = status_result.get("agents", [])
+            if len(agents_list) == 10:
+                print(f"✅ Agents list has 10 agents")
+                print(f"   Agent names: {agents_list}")
+            else:
+                print(f"❌ Agents list should have 10 agents, got {len(agents_list)}")
+                status_valid = False
+            
+            # Check llm_tiers
+            llm_tiers = status_result.get("llm_tiers", {})
+            if "tier1" in llm_tiers and "tier2" in llm_tiers:
+                tier1_available = llm_tiers["tier1"].get("available")
+                tier2_available = llm_tiers["tier2"].get("available")
+                
+                if tier1_available is True:
+                    print(f"✅ Tier1 available: {tier1_available}")
+                else:
+                    print(f"❌ Tier1 should be available: {tier1_available}")
+                    status_valid = False
+                    
+                if tier2_available is True:
+                    print(f"✅ Tier2 available: {tier2_available}")
+                else:
+                    print(f"❌ Tier2 should be available: {tier2_available}")
+                    status_valid = False
+            else:
+                print(f"❌ LLM tiers missing tier1 or tier2")
+                status_valid = False
+            
+            if status_valid:
+                print(f"✅ Agents status validation passed")
+        
+        # =================================================================
+        # TEST 3: Multi-Agent Analysis - POST /api/brain/agents/analyze (90s timeout)
+        # =================================================================
+        print(f"\n🧠 Testing Multi-Agent Analysis - POST /api/brain/agents/analyze")
+        print("-" * 50)
+        print("⚠️  This test uses 90-second timeout as it makes multiple LLM API calls")
+        
+        analyze_data = {
+            "symbol": "RELIANCE",
+            "context": {}
+        }
+        
+        # Use 90-second timeout as specified in review request
+        url = f"{self.base_url}/api/brain/agents/analyze"
+        headers = {'Content-Type': 'application/json'}
+        
+        self.tests_run += 1
+        print(f"\n🔍 Testing Multi-Agent Analysis...")
+        print(f"   URL: {url}")
+        print(f"   Timeout: 90 seconds")
+        
+        try:
+            response = requests.post(url, json=analyze_data, headers=headers, timeout=90)
+            
+            success = response.status_code == 200
+            if success:
+                self.tests_passed += 1
+                print(f"✅ PASSED - Status: {response.status_code}")
+                self.passed_tests.append("Multi-Agent Analysis")
+                
+                try:
+                    analyze_result = response.json()
+                    
+                    # Verify analysis result structure
+                    required_analyze_fields = [
+                        "symbol", "final_signal", "final_confidence", "analyst_results",
+                        "bull_case", "bear_case", "synthesis", "trade_plan", "risk_review",
+                        "report", "stages_completed", "total_latency_ms"
+                    ]
+                    analyze_valid = True
+                    
+                    for field in required_analyze_fields:
+                        if field not in analyze_result:
+                            print(f"❌ Missing field in analysis result: {field}")
+                            analyze_valid = False
+                        else:
+                            print(f"✅ Found field: {field}")
+                    
+                    # Check symbol
+                    symbol = analyze_result.get("symbol")
+                    if symbol == "RELIANCE":
+                        print(f"✅ Correct symbol: {symbol}")
+                    else:
+                        print(f"❌ Incorrect symbol: expected 'RELIANCE', got '{symbol}'")
+                        analyze_valid = False
+                    
+                    # Check final_signal
+                    final_signal = analyze_result.get("final_signal")
+                    valid_signals = ["BUY", "SELL", "HOLD"]
+                    if final_signal in valid_signals:
+                        print(f"✅ Valid final signal: {final_signal}")
+                    else:
+                        print(f"❌ Invalid final signal: {final_signal}")
+                        analyze_valid = False
+                    
+                    # Check final_confidence (0.0-1.0)
+                    final_confidence = analyze_result.get("final_confidence")
+                    if isinstance(final_confidence, (int, float)) and 0.0 <= final_confidence <= 1.0:
+                        print(f"✅ Valid final confidence: {final_confidence}")
+                    else:
+                        print(f"❌ Invalid final confidence: {final_confidence}")
+                        analyze_valid = False
+                    
+                    # Check analyst_results array (should have 4 items)
+                    analyst_results = analyze_result.get("analyst_results", [])
+                    if len(analyst_results) == 4:
+                        print(f"✅ Analyst results count: {len(analyst_results)}")
+                        
+                        # Check for expected analyst types
+                        expected_types = ["Technical", "Fundamental", "Macro", "EventDriven"]
+                        found_types = [result.get("type", result.get("analyst_type", "")) for result in analyst_results]
+                        
+                        for expected_type in expected_types:
+                            if any(expected_type in found_type for found_type in found_types):
+                                print(f"✅ Found analyst type: {expected_type}")
+                            else:
+                                print(f"⚠️  Expected analyst type not found: {expected_type}")
+                    else:
+                        print(f"❌ Analyst results should have 4 items, got {len(analyst_results)}")
+                        analyze_valid = False
+                    
+                    # Check bull_case and bear_case objects
+                    bull_case = analyze_result.get("bull_case")
+                    bear_case = analyze_result.get("bear_case")
+                    
+                    if isinstance(bull_case, dict):
+                        print(f"✅ Bull case object found")
+                    else:
+                        print(f"❌ Bull case should be object, got {type(bull_case)}")
+                        analyze_valid = False
+                        
+                    if isinstance(bear_case, dict):
+                        print(f"✅ Bear case object found")
+                    else:
+                        print(f"❌ Bear case should be object, got {type(bear_case)}")
+                        analyze_valid = False
+                    
+                    # Check synthesis object
+                    synthesis = analyze_result.get("synthesis")
+                    if isinstance(synthesis, dict):
+                        synthesis_signal = synthesis.get("signal")
+                        synthesis_confidence = synthesis.get("confidence")
+                        
+                        if synthesis_signal in valid_signals:
+                            print(f"✅ Synthesis signal: {synthesis_signal}")
+                        else:
+                            print(f"❌ Invalid synthesis signal: {synthesis_signal}")
+                            analyze_valid = False
+                            
+                        if isinstance(synthesis_confidence, (int, float)) and 0.0 <= synthesis_confidence <= 1.0:
+                            print(f"✅ Synthesis confidence: {synthesis_confidence}")
+                        else:
+                            print(f"❌ Invalid synthesis confidence: {synthesis_confidence}")
+                            analyze_valid = False
+                    else:
+                        print(f"❌ Synthesis should be object, got {type(synthesis)}")
+                        analyze_valid = False
+                    
+                    # Check trade_plan object
+                    trade_plan = analyze_result.get("trade_plan")
+                    if isinstance(trade_plan, dict):
+                        required_trade_fields = ["entry", "stop", "target"]
+                        trade_valid = True
+                        
+                        for field in required_trade_fields:
+                            if field in trade_plan:
+                                print(f"✅ Trade plan has {field}")
+                            else:
+                                print(f"❌ Trade plan missing {field}")
+                                trade_valid = False
+                        
+                        if trade_valid:
+                            print(f"✅ Trade plan structure valid")
+                    else:
+                        print(f"❌ Trade plan should be object, got {type(trade_plan)}")
+                        analyze_valid = False
+                    
+                    # Check risk_review object
+                    risk_review = analyze_result.get("risk_review")
+                    if isinstance(risk_review, dict):
+                        decision = risk_review.get("decision")
+                        valid_decisions = ["APPROVE", "MODIFY", "VETO"]
+                        
+                        if decision in valid_decisions:
+                            print(f"✅ Risk review decision: {decision}")
+                        else:
+                            print(f"❌ Invalid risk review decision: {decision}")
+                            analyze_valid = False
+                    else:
+                        print(f"❌ Risk review should be object, got {type(risk_review)}")
+                        analyze_valid = False
+                    
+                    # Check report object
+                    report = analyze_result.get("report")
+                    if isinstance(report, dict):
+                        print(f"✅ Report object found")
+                    else:
+                        print(f"❌ Report should be object, got {type(report)}")
+                        analyze_valid = False
+                    
+                    # Check stages_completed (should list all 6 stages)
+                    stages_completed = analyze_result.get("stages_completed", [])
+                    if len(stages_completed) == 6:
+                        print(f"✅ Stages completed count: {len(stages_completed)}")
+                        print(f"   Completed stages: {stages_completed}")
+                    else:
+                        print(f"❌ Stages completed should be 6, got {len(stages_completed)}")
+                        analyze_valid = False
+                    
+                    # Check total_latency_ms
+                    total_latency_ms = analyze_result.get("total_latency_ms")
+                    if isinstance(total_latency_ms, (int, float)) and total_latency_ms > 0:
+                        print(f"✅ Total latency: {total_latency_ms} ms")
+                    else:
+                        print(f"❌ Invalid total latency: {total_latency_ms}")
+                        analyze_valid = False
+                    
+                    if analyze_valid:
+                        print(f"✅ Multi-agent analysis validation passed")
+                    
+                except Exception as e:
+                    print(f"❌ Error parsing analysis response: {str(e)}")
+                    analyze_valid = False
+                    
+            else:
+                print(f"❌ FAILED - Expected 200, got {response.status_code}")
+                print(f"   Response: {response.text[:200]}...")
+                self.failed_tests.append({
+                    "test": "Multi-Agent Analysis",
+                    "expected": 200,
+                    "actual": response.status_code,
+                    "response": response.text[:500]
+                })
+
+        except Exception as e:
+            print(f"❌ FAILED - Error: {str(e)}")
+            self.failed_tests.append({
+                "test": "Multi-Agent Analysis",
+                "error": str(e)
+            })
+        
+        print(f"\n✅ Brain Phase 3.3 LLM Multi-Agent System testing completed")
+        print("="*60)
+
     def test_brain_phase2_endpoints(self):
         """Test Brain Phase 2 API endpoints as specified in review request"""
         print("\n" + "="*60)
@@ -1511,8 +1925,8 @@ class StockAnalysisPlatformTester:
             # Test basic health endpoints first
             self.test_health_endpoints()
             
-            # Test Brain Phase 3.2 FinBERT Sentiment Pipeline endpoints (HIGH PRIORITY)
-            self.test_brain_phase3_2_sentiment_endpoints()
+            # Test Brain Phase 3.3 LLM Multi-Agent System endpoints (CURRENT FOCUS)
+            self.test_brain_phase3_3_multiagent_endpoints()
             
         except KeyboardInterrupt:
             print("\n⚠️  Tests interrupted by user")

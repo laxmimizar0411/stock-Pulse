@@ -81,6 +81,9 @@ class BrainEngine:
         self.social_scraper = None
         self.earnings_analyzer = None
 
+        # Phase 3.3 subsystems — LLM Multi-Agent System
+        self.agent_orchestrator = None
+
         # Phase 3 subsystems
         self.hmm_detector = None
         self.kmeans_detector = None
@@ -161,6 +164,9 @@ class BrainEngine:
         # 12. Initialize Sentiment Pipeline (Phase 3.2)
         await self._start_sentiment_pipeline()
 
+        # 13. Initialize LLM Multi-Agent System (Phase 3.3)
+        await self._start_agent_system()
+
         self._started = True
         logger.info("=" * 60)
         logger.info("Stock Pulse Brain READY — Phase 1+2+3 Active")
@@ -180,6 +186,7 @@ class BrainEngine:
         logger.info("  Sentiment Pipeline: %s", "✅" if self.sentiment_aggregator else "❌")
         logger.info("  Social Scraper:   %s", "✅" if self.social_scraper else "❌")
         logger.info("  Earnings Analyzer:%s", "✅" if self.earnings_analyzer else "❌")
+        logger.info("  Agent Orchestrator: %s", "✅" if self.agent_orchestrator else "❌")
         logger.info("=" * 60)
 
     async def stop(self):
@@ -1102,6 +1109,56 @@ class BrainEngine:
             return {"error": str(e)}
 
     # -----------------------------------------------------------------------
+    # Phase 3.3: LLM Multi-Agent System
+    # -----------------------------------------------------------------------
+
+    async def _start_agent_system(self):
+        """Initialize the LLM multi-agent orchestration system."""
+        try:
+            from brain.agents.orchestrator import AgentOrchestrator
+
+            self.agent_orchestrator = AgentOrchestrator()
+
+            if self.agent_orchestrator.is_available:
+                logger.info("✅ LLM Multi-Agent System: READY (10 agents, Gemini 2-tier)")
+            else:
+                logger.warning("⚠️ LLM Multi-Agent System: NO API KEY (agents initialized but LLM unavailable)")
+
+        except Exception:
+            logger.exception("⚠️ LLM Multi-Agent System: FAILED to initialize")
+            self.agent_orchestrator = None
+
+    async def run_agent_analysis(self, symbol: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Run the full multi-agent analysis pipeline for a symbol."""
+        if not self.agent_orchestrator:
+            return {"error": "Agent orchestrator not initialized"}
+
+        try:
+            # Build context from brain subsystems
+            ctx = context or {}
+
+            # Add regime info
+            if self._current_regime:
+                ctx["regime"] = self._current_regime.value
+
+            # Add sentiment if available
+            if self.sentiment_aggregator and symbol != "MARKET":
+                try:
+                    sent = self.sentiment_aggregator._cache.get(symbol)
+                    if sent:
+                        ctx["sentiment"] = sent.to_dict()
+                        ctx["sentiment_score"] = sent.score
+                except Exception:
+                    pass
+
+            result = await self.agent_orchestrator.analyze_symbol(symbol, ctx)
+            return result.to_dict()
+
+        except Exception as e:
+            logger.exception(f"Agent analysis failed for {symbol}")
+            return {"error": str(e)}
+
+    # -----------------------------------------------------------------------
     # Kafka (original)
     # -----------------------------------------------------------------------
 
@@ -1602,6 +1659,15 @@ class BrainEngine:
             }
         else:
             health["subsystems"]["earnings_analyzer"] = {"status": "not_initialized"}
+
+        # Phase 3.3: Agent System
+        if self.agent_orchestrator:
+            health["subsystems"]["agent_orchestrator"] = {
+                "status": "healthy" if self.agent_orchestrator.is_available else "no_api_key",
+                "stats": self.agent_orchestrator.get_stats(),
+            }
+        else:
+            health["subsystems"]["agent_orchestrator"] = {"status": "not_initialized"}
 
         # Overall status
         initialized_count = sum(
