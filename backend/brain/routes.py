@@ -2322,3 +2322,344 @@ async def get_phase5_2_summary():
         ]
     }
 
+
+# =====================================================================
+# Phase 5.3: Portfolio Optimization (Black-Litterman + HRP)
+# =====================================================================
+
+class PortfolioOptimizationRequest(BaseModel):
+    symbols: List[str] = Field(..., description="List of stock symbols")
+    forecasts: Dict[str, float] = Field(..., description="Expected return forecasts (%) per symbol")
+    sentiment_scores: Optional[Dict[str, float]] = Field(None, description="Sentiment scores (-1 to 1)")
+    risk_metrics: Optional[Dict[str, float]] = Field(None, description="Volatility or VaR per symbol")
+    market_cap_weights: Optional[List[float]] = Field(None, description="Market cap weights (sum to 1)")
+    returns_data: Optional[List[List[float]]] = Field(None, description="Historical returns matrix")
+    max_weight: Optional[float] = Field(0.25, description="Max weight per stock")
+    min_weight: Optional[float] = Field(0.0, description="Min weight per stock")
+
+
+@router.post("/portfolio/optimize-bl")
+async def optimize_black_litterman(request: PortfolioOptimizationRequest):
+    """
+    Black-Litterman portfolio optimization with AI-generated views.
+    
+    Combines:
+    - Market equilibrium returns (CAPM-based)
+    - AI views from forecasts (Phase 5.1)
+    - Sentiment scores for confidence (Phase 3.2)
+    - Risk metrics for uncertainty (Phase 3.4)
+    """
+    if not brain_engine.bl_optimizer:
+        raise HTTPException(status_code=503, detail="Black-Litterman optimizer not initialized")
+    
+    try:
+        import numpy as np
+        
+        # Prepare inputs
+        symbols = request.symbols
+        n_assets = len(symbols)
+        
+        # Market cap weights (default: equal weight)
+        if request.market_cap_weights:
+            market_cap_weights = np.array(request.market_cap_weights)
+        else:
+            market_cap_weights = np.ones(n_assets) / n_assets
+        
+        # Covariance matrix (from returns or default)
+        if request.returns_data:
+            returns = np.array(request.returns_data)
+            covariance_matrix = np.cov(returns.T)
+        else:
+            # Default: assume 20% vol, 0.5 correlation
+            vol = 0.20
+            corr = 0.5
+            covariance_matrix = vol**2 * (corr * np.ones((n_assets, n_assets)) + (1 - corr) * np.eye(n_assets))
+        
+        # Constraints
+        constraints = {
+            'max_weight': request.max_weight,
+            'min_weight': request.min_weight
+        }
+        
+        # Run optimization
+        result = brain_engine.bl_optimizer.run_black_litterman(
+            symbols=symbols,
+            market_cap_weights=market_cap_weights,
+            covariance_matrix=covariance_matrix,
+            forecasts=request.forecasts,
+            sentiment_scores=request.sentiment_scores,
+            risk_metrics=request.risk_metrics,
+            constraints=constraints
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Black-Litterman optimization failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Optimization failed: {str(e)}")
+
+
+@router.post("/portfolio/optimize-hrp")
+async def optimize_hrp(request: PortfolioOptimizationRequest):
+    """
+    Hierarchical Risk Parity (HRP) portfolio optimization.
+    
+    Risk-based allocation using hierarchical clustering.
+    Does not require expected returns - purely risk-driven.
+    """
+    if not brain_engine.hrp_optimizer:
+        raise HTTPException(status_code=503, detail="HRP optimizer not initialized")
+    
+    try:
+        import numpy as np
+        
+        symbols = request.symbols
+        n_assets = len(symbols)
+        
+        # Correlation and covariance matrices
+        if request.returns_data:
+            returns = np.array(request.returns_data)
+            correlation_matrix = np.corrcoef(returns.T)
+            covariance_matrix = np.cov(returns.T)
+        else:
+            # Default: assume 20% vol, 0.5 correlation
+            vol = 0.20
+            corr = 0.5
+            correlation_matrix = corr * np.ones((n_assets, n_assets)) + (1 - corr) * np.eye(n_assets)
+            covariance_matrix = vol**2 * correlation_matrix
+        
+        # Run HRP optimization
+        result = brain_engine.hrp_optimizer.optimize(
+            correlation_matrix=correlation_matrix,
+            covariance_matrix=covariance_matrix,
+            symbols=symbols
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"HRP optimization failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Optimization failed: {str(e)}")
+
+
+@router.post("/portfolio/optimize-combined")
+async def optimize_combined(request: PortfolioOptimizationRequest):
+    """
+    Combined Black-Litterman + HRP optimization.
+    
+    Two-step process:
+    1. Black-Litterman generates view-driven weights
+    2. HRP overlay adjusts for risk clustering
+    
+    Blend: 70% BL + 30% HRP (configurable)
+    
+    Best of both worlds:
+    - View-driven allocation (BL)
+    - Risk diversification (HRP)
+    - Caps correlation exposure
+    """
+    if not brain_engine.combined_optimizer:
+        raise HTTPException(status_code=503, detail="Combined optimizer not initialized")
+    
+    try:
+        import numpy as np
+        
+        symbols = request.symbols
+        n_assets = len(symbols)
+        
+        # Market cap weights
+        if request.market_cap_weights:
+            market_cap_weights = np.array(request.market_cap_weights)
+        else:
+            market_cap_weights = np.ones(n_assets) / n_assets
+        
+        # Correlation and covariance matrices
+        if request.returns_data:
+            returns = np.array(request.returns_data)
+            correlation_matrix = np.corrcoef(returns.T)
+            covariance_matrix = np.cov(returns.T)
+        else:
+            # Default matrices
+            vol = 0.20
+            corr = 0.5
+            correlation_matrix = corr * np.ones((n_assets, n_assets)) + (1 - corr) * np.eye(n_assets)
+            covariance_matrix = vol**2 * correlation_matrix
+        
+        # Constraints
+        constraints = {
+            'max_weight': request.max_weight,
+            'min_weight': request.min_weight
+        }
+        
+        # Run combined optimization
+        result = brain_engine.combined_optimizer.optimize_combined(
+            symbols=symbols,
+            market_cap_weights=market_cap_weights,
+            correlation_matrix=correlation_matrix,
+            covariance_matrix=covariance_matrix,
+            forecasts=request.forecasts,
+            sentiment_scores=request.sentiment_scores,
+            risk_metrics=request.risk_metrics,
+            constraints=constraints
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Combined optimization failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Optimization failed: {str(e)}")
+
+
+@router.post("/portfolio/compare-strategies")
+async def compare_portfolio_strategies(request: PortfolioOptimizationRequest):
+    """
+    Compare Black-Litterman, HRP, and Combined strategies side-by-side.
+    
+    Returns performance metrics for all three approaches to help
+    select the best strategy for current market conditions.
+    """
+    if not brain_engine.combined_optimizer:
+        raise HTTPException(status_code=503, detail="Portfolio optimizers not initialized")
+    
+    try:
+        import numpy as np
+        
+        symbols = request.symbols
+        n_assets = len(symbols)
+        
+        # Market cap weights
+        if request.market_cap_weights:
+            market_cap_weights = np.array(request.market_cap_weights)
+        else:
+            market_cap_weights = np.ones(n_assets) / n_assets
+        
+        # Matrices
+        if request.returns_data:
+            returns = np.array(request.returns_data)
+            correlation_matrix = np.corrcoef(returns.T)
+            covariance_matrix = np.cov(returns.T)
+        else:
+            vol = 0.20
+            corr = 0.5
+            correlation_matrix = corr * np.ones((n_assets, n_assets)) + (1 - corr) * np.eye(n_assets)
+            covariance_matrix = vol**2 * correlation_matrix
+        
+        # Compare strategies
+        comparison = brain_engine.combined_optimizer.compare_strategies(
+            symbols=symbols,
+            market_cap_weights=market_cap_weights,
+            correlation_matrix=correlation_matrix,
+            covariance_matrix=covariance_matrix,
+            forecasts=request.forecasts,
+            sentiment_scores=request.sentiment_scores,
+            risk_metrics=request.risk_metrics
+        )
+        
+        return comparison
+        
+    except Exception as e:
+        logger.error(f"Strategy comparison failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
+
+
+@router.get("/phase5_3/summary")
+async def get_phase5_3_summary():
+    """Phase 5.3 summary: Portfolio Optimization (Black-Litterman + HRP)."""
+    return {
+        "phase": "5.3",
+        "name": "Portfolio Optimization (Black-Litterman + HRP)",
+        "status": "operational" if brain_engine.combined_optimizer else "not_initialized",
+        "components": {
+            "black_litterman": {
+                "type": "View-driven portfolio optimization",
+                "inputs": [
+                    "Market equilibrium returns (CAPM)",
+                    "AI forecasts from Phase 5.1 (Chronos/TimesFM)",
+                    "Sentiment scores from Phase 3.2 (confidence adjustment)",
+                    "Risk metrics from Phase 3.4 (uncertainty adjustment)"
+                ],
+                "output": "Posterior expected returns → optimal weights",
+                "key_parameters": {
+                    "risk_free_rate": "6.5% (India 10Y)",
+                    "market_risk_premium": "8%",
+                    "tau": "0.025 (uncertainty scaling)"
+                }
+            },
+            "hrp": {
+                "type": "Hierarchical Risk Parity",
+                "method": "Correlation-based hierarchical clustering",
+                "steps": [
+                    "1. Compute distance matrix from correlation",
+                    "2. Hierarchical clustering (single linkage)",
+                    "3. Quasi-diagonalization (dendrogram ordering)",
+                    "4. Recursive bisection for weight allocation"
+                ],
+                "benefits": [
+                    "No expected returns needed",
+                    "Robust to estimation error",
+                    "Natural diversification via clustering",
+                    "Caps correlation exposure"
+                ]
+            },
+            "combined_bl_hrp": {
+                "type": "Hybrid optimization (70% BL + 30% HRP)",
+                "workflow": [
+                    "Step 1: Black-Litterman generates view-driven weights",
+                    "Step 2: HRP overlay adjusts for risk clustering",
+                    "Step 3: Blend both approaches"
+                ],
+                "metrics": [
+                    "Expected return (annualized)",
+                    "Volatility (annualized)",
+                    "Sharpe ratio",
+                    "Diversification ratio",
+                    "Effective N stocks (Herfindahl)"
+                ]
+            },
+            "walk_forward_validator": {
+                "type": "Out-of-sample validation",
+                "configuration": {
+                    "train_window": "12 months",
+                    "test_window": "1 month",
+                    "retraining": "Monthly",
+                    "target_sharpe": "2.0 (annualized)"
+                },
+                "metrics": [
+                    "Average Sharpe ratio",
+                    "% periods meeting target",
+                    "Average max drawdown",
+                    "Cumulative returns"
+                ]
+            }
+        },
+        "api_endpoints": [
+            "POST /api/brain/portfolio/optimize-bl",
+            "POST /api/brain/portfolio/optimize-hrp",
+            "POST /api/brain/portfolio/optimize-combined",
+            "POST /api/brain/portfolio/compare-strategies",
+            "GET /api/brain/phase5_3/summary"
+        ],
+        "integration": {
+            "phase_5_1": "Chronos/TimesFM forecasts → BL expected return views",
+            "phase_3_2": "Sentiment scores → BL confidence adjustment",
+            "phase_3_4": "VaR/volatility → BL view uncertainty"
+        },
+        "features": [
+            "AI-generated views from forecasts + sentiment + risk",
+            "Market equilibrium (CAPM) as prior",
+            "Bayesian update combining prior + views",
+            "Hierarchical risk-based diversification",
+            "70/30 BL+HRP blend for balanced allocation",
+            "Portfolio constraints (max/min weights)",
+            "Diversification metrics (DR, effective N)",
+            "Walk-forward validation (target Sharpe > 2.0)"
+        ],
+        "use_cases": [
+            "Long-term portfolio construction",
+            "AI-driven tactical asset allocation",
+            "Risk-balanced diversification",
+            "Multi-strategy comparison",
+            "Walk-forward performance validation"
+        ]
+    }
+
