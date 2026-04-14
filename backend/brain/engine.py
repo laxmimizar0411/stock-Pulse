@@ -126,6 +126,9 @@ class BrainEngine:
         self.combined_optimizer = None
         self.walk_forward_validator = None
 
+        # Phase 5.6 subsystems — Chart Pattern Detection
+        self.chart_pattern_detector = None
+
         # Database reference
         self._db = None
 
@@ -245,6 +248,7 @@ class BrainEngine:
         logger.info("  Forecasting (5.1): %s", "✅" if self.ensemble_forecaster else "❌")
         logger.info("  Global Corr (5.2): %s", "✅" if self.global_markets_fetcher else "❌")
         logger.info("  Portfolio Opt(5.3): %s", "✅" if self.combined_optimizer else "❌")
+        logger.info("  Chart Patterns(5.6): %s", "✅" if self.chart_pattern_detector else "❌")
         logger.info("=" * 60)
 
     async def stop(self):
@@ -1438,6 +1442,32 @@ class BrainEngine:
             self.walk_forward_validator = None
 
     # -----------------------------------------------------------------------
+    # Phase 5.6: Chart Pattern Detection
+    # -----------------------------------------------------------------------
+
+    async def _start_chart_pattern_detection(self):
+        """Initialize Phase 5.6 chart pattern detection."""
+        logger.info("Initializing Phase 5.6: Chart Pattern Detection...")
+        
+        try:
+            from brain.patterns import ChartPatternDetector
+            
+            self.chart_pattern_detector = ChartPatternDetector(
+                min_distance=5,
+                prominence_pct=0.02,
+                tolerance=0.03
+            )
+            
+            logger.info("✅ Chart Pattern Detection: READY")
+            logger.info("   • Peak/Trough Detector (scipy.signal)")
+            logger.info("   • Pattern Matchers (7 patterns)")
+            logger.info("   • Target: ~10ms per stock")
+            
+        except Exception:
+            logger.exception("⚠️ Chart Pattern Detection: FAILED")
+            self.chart_pattern_detector = None
+
+    # -----------------------------------------------------------------------
     # Kafka (original)
     # -----------------------------------------------------------------------
 
@@ -2033,6 +2063,15 @@ class BrainEngine:
             }
         else:
             health["subsystems"]["portfolio_optimization"] = {"status": "not_initialized"}
+
+        # Phase 5.6: Chart Pattern Detection
+        if self.chart_pattern_detector:
+            health["subsystems"]["chart_pattern_detection"] = {
+                "status": "healthy",
+                "info": self.chart_pattern_detector.get_detector_stats(),
+            }
+        else:
+            health["subsystems"]["chart_pattern_detection"] = {"status": "not_initialized"}
 
         # Overall status
         initialized_count = sum(

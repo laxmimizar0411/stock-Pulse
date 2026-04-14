@@ -2663,3 +2663,85 @@ async def get_phase5_3_summary():
         ]
     }
 
+
+
+# =====================================================================
+# Phase 5.6: Chart Pattern Detection
+# =====================================================================
+
+class PatternDetectionRequest(BaseModel):
+    symbol: str = Field(..., description="Stock symbol")
+    close_prices: List[float] = Field(..., description="Close price array")
+    timestamps: Optional[List[str]] = Field(None, description="Timestamp array (ISO format)")
+    pattern_types: Optional[List[str]] = Field(None, description="Specific patterns to detect")
+    min_confidence: Optional[float] = Field(0.65, description="Minimum confidence threshold")
+
+
+@router.post("/patterns/detect")
+async def detect_chart_patterns(request: PatternDetectionRequest):
+    """
+    Detect chart patterns in price data.
+    
+    Detects:
+    - Head & Shoulders (bearish reversal)
+    - Inverse Head & Shoulders (bullish reversal)
+    - Double Top (bearish reversal)
+    - Double Bottom (bullish reversal)
+    - Triangles (ascending/descending/symmetric)
+    
+    Target execution: ~10ms per stock
+    """
+    if not brain_engine.chart_pattern_detector:
+        raise HTTPException(status_code=503, detail="Chart pattern detector not initialized")
+    
+    try:
+        import numpy as np
+        from datetime import datetime
+        
+        # Prepare data
+        prices = np.array(request.close_prices)
+        
+        timestamps = None
+        if request.timestamps:
+            timestamps = [datetime.fromisoformat(ts) for ts in request.timestamps]
+        
+        # Detect patterns
+        result = brain_engine.chart_pattern_detector.detect_patterns_for_symbol(
+            symbol=request.symbol,
+            ohlcv_data={
+                "close": prices.tolist(),
+                "timestamps": timestamps
+            },
+            pattern_types=request.pattern_types
+        )
+        
+        # Get actionable signals
+        signals = brain_engine.chart_pattern_detector.get_actionable_signals(
+            result,
+            min_confidence=request.min_confidence
+        )
+        
+        result["actionable_signals"] = signals
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Pattern detection failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Pattern detection failed: {str(e)}")
+
+
+@router.get("/phase5_6/summary")
+async def get_phase5_6_summary():
+    """Phase 5.6 summary: Chart Pattern Detection."""
+    return {
+        "phase": "5.6",
+        "name": "Chart Pattern Detection",
+        "status": "operational" if brain_engine.chart_pattern_detector else "not_initialized",
+        "patterns_supported": 7,
+        "api_endpoints": [
+            "POST /api/brain/patterns/detect",
+            "GET /api/brain/phase5_6/summary"
+        ]
+    }
+
+
