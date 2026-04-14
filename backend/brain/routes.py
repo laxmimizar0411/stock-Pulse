@@ -2032,3 +2032,293 @@ async def get_phase5_1_summary():
     }
 
 
+
+
+
+# =====================================================================
+# Phase 5.2: Global Correlation Engine
+# =====================================================================
+
+@router.get("/global/overnight")
+async def get_overnight_global_data(lookback_days: int = 30):
+    """
+    Get overnight global markets data.
+    
+    Fetches data for 12 global markets: US indices, Asian indices,
+    commodities, currencies, and bonds.
+    """
+    if not brain_engine.global_markets_fetcher:
+        raise HTTPException(status_code=503, detail="Global markets fetcher not initialized")
+    
+    try:
+        # Fetch overnight data
+        market_data = await brain_engine.global_markets_fetcher.fetch_overnight_data(lookback_days)
+        
+        # Get summary
+        summary = brain_engine.global_markets_fetcher.get_market_summary()
+        
+        # Get market status
+        market_status = await brain_engine.global_markets_fetcher.get_market_status()
+        
+        return {
+            "summary": summary,
+            "market_status": market_status,
+            "data_points": {
+                market: len(df) for market, df in market_data.items()
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch overnight data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch data: {str(e)}")
+
+
+@router.get("/global/correlations")
+async def get_global_correlations(lookback_days: int = 60):
+    """
+    Get EWMA correlation matrix for global markets.
+    
+    Returns rolling correlation matrix computed using EWMA.
+    """
+    if not brain_engine.correlation_engine:
+        raise HTTPException(status_code=503, detail="Correlation engine not initialized")
+    
+    try:
+        # Fetch market data first
+        market_data = await brain_engine.global_markets_fetcher.fetch_overnight_data(lookback_days)
+        
+        if not market_data:
+            raise HTTPException(status_code=404, detail="No market data available")
+        
+        # Compute correlation matrix
+        corr_matrix = brain_engine.correlation_engine.compute_ewma_correlation(market_data)
+        
+        # Get summary
+        summary = brain_engine.correlation_engine.get_correlation_summary()
+        
+        # Get top correlations
+        top_pairs = brain_engine.correlation_engine.find_top_correlations(top_n=10)
+        
+        # Get India-relevant correlations
+        india_corr = brain_engine.correlation_engine.get_india_relevant_correlations()
+        
+        return {
+            "summary": summary,
+            "correlation_matrix": corr_matrix.to_dict(),
+            "top_correlated_pairs": [
+                {"market1": m1, "market2": m2, "correlation": corr}
+                for m1, m2, corr in top_pairs
+            ],
+            "india_relevant": india_corr
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Correlation computation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Correlation failed: {str(e)}")
+
+
+@router.get("/global/signals")
+async def get_premarket_signals():
+    """
+    Get pre-market swing signals based on overnight global movements.
+    
+    Generates sector-specific signals for Indian market open (9:15 AM IST).
+    Best called between 7:00 AM - 9:00 AM IST.
+    """
+    if not brain_engine.premarket_signal_generator:
+        raise HTTPException(status_code=503, detail="Signal generator not initialized")
+    
+    try:
+        # Fetch overnight data
+        market_data = await brain_engine.global_markets_fetcher.fetch_overnight_data(30)
+        
+        if not market_data:
+            raise HTTPException(status_code=404, detail="No market data available")
+        
+        # Get percentage changes
+        global_changes = brain_engine.global_markets_fetcher.get_percentage_changes(periods=1)
+        
+        # Compute correlations
+        corr_matrix = brain_engine.correlation_engine.compute_ewma_correlation(market_data)
+        india_corr = brain_engine.correlation_engine.get_india_relevant_correlations()
+        
+        # Detect breakouts
+        breakouts = brain_engine.correlation_engine.detect_correlation_breakouts(std_threshold=2.0)
+        
+        # Generate signals
+        signals = brain_engine.premarket_signal_generator.generate_premarket_signals(
+            global_changes=global_changes,
+            correlations=india_corr,
+            breakouts=breakouts
+        )
+        
+        return signals
+        
+    except Exception as e:
+        logger.error(f"Signal generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Signal generation failed: {str(e)}")
+
+
+@router.get("/global/breakouts")
+async def get_correlation_breakouts(std_threshold: float = 2.0):
+    """
+    Get correlation breakout alerts (>2σ divergence).
+    
+    Detects significant divergences in market correlations.
+    """
+    if not brain_engine.correlation_engine:
+        raise HTTPException(status_code=503, detail="Correlation engine not initialized")
+    
+    try:
+        # Fetch data and compute correlations
+        market_data = await brain_engine.global_markets_fetcher.fetch_overnight_data(60)
+        
+        if not market_data:
+            raise HTTPException(status_code=404, detail="No market data available")
+        
+        # Compute current correlations
+        corr_matrix = brain_engine.correlation_engine.compute_ewma_correlation(market_data)
+        
+        # Detect breakouts
+        breakouts = brain_engine.correlation_engine.detect_correlation_breakouts(
+            std_threshold=std_threshold
+        )
+        
+        return {
+            "breakout_threshold_sigma": std_threshold,
+            "breakouts_detected": len(breakouts),
+            "breakouts": breakouts
+        }
+        
+    except Exception as e:
+        logger.error(f"Breakout detection failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Breakout detection failed: {str(e)}")
+
+
+@router.get("/global/sector-impacts")
+async def get_sector_impacts():
+    """
+    Get India-specific sector impacts from global market movements.
+    
+    Maps overnight global moves to Indian sector impacts using
+    correlation-based sensitivity scores.
+    """
+    if not brain_engine.global_markets_fetcher:
+        raise HTTPException(status_code=503, detail="Global markets fetcher not initialized")
+    
+    try:
+        from brain.global_markets.sector_mappings import aggregate_sector_impacts
+        
+        # Get overnight changes
+        global_changes = brain_engine.global_markets_fetcher.get_percentage_changes(periods=1)
+        
+        if not global_changes:
+            raise HTTPException(status_code=404, detail="No market data available")
+        
+        # Aggregate sector impacts
+        sector_impacts = aggregate_sector_impacts(global_changes)
+        
+        # Sort by absolute impact
+        sorted_sectors = sorted(
+            sector_impacts.items(),
+            key=lambda x: abs(x[1]["total_impact_pct"]),
+            reverse=True
+        )
+        
+        return {
+            "global_changes": global_changes,
+            "sector_impacts": {
+                sector: data for sector, data in sorted_sectors
+            },
+            "top_impacted_sectors": [
+                {
+                    "sector": sector,
+                    "impact_pct": data["total_impact_pct"],
+                    "top_driver": data["contributing_markets"][0] if data["contributing_markets"] else None
+                }
+                for sector, data in sorted_sectors[:10]
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"Sector impact analysis failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Sector impact failed: {str(e)}")
+
+
+@router.get("/phase5_2/summary")
+async def get_phase5_2_summary():
+    """Phase 5.2 summary: Global Correlation Engine."""
+    return {
+        "phase": "5.2",
+        "name": "Global Correlation Engine",
+        "status": "operational" if brain_engine.global_markets_fetcher else "not_initialized",
+        "components": {
+            "global_markets_fetcher": {
+                "markets_tracked": 12,
+                "markets": [
+                    "S&P 500", "NASDAQ", "Dow Jones",
+                    "SGX NIFTY", "Nikkei 225", "Hang Seng",
+                    "Crude WTI", "Crude Brent", "Gold",
+                    "DXY (US Dollar)", "US 10Y Treasury", "MSCI EM"
+                ],
+                "data_source": "YFinance",
+                "cache_ttl": "5 minutes"
+            },
+            "correlation_engine": {
+                "type": "EWMA (Exponentially Weighted Moving Average)",
+                "span": 60,
+                "min_periods": 20,
+                "features": [
+                    "Rolling correlation matrix",
+                    "Breakout detection (>2σ)",
+                    "India-relevant correlations"
+                ]
+            },
+            "signal_generator": {
+                "type": "Pre-Market Swing Signals",
+                "schedule": "7:00-9:00 AM IST (before market open)",
+                "signals": [
+                    "Market sentiment (bullish/bearish/neutral)",
+                    "Sector-specific signals (BUY/SELL/HOLD)",
+                    "Key overnight movers",
+                    "Breakout alerts"
+                ]
+            },
+            "sector_mappings": {
+                "type": "India-Specific Correlation Mappings",
+                "mappings": [
+                    "Crude Oil ↔ Aviation, Paints, Oil & Gas",
+                    "DXY ↔ IT/Pharma exports, Banking (EM flows)",
+                    "Gold ↔ Jewellery, risk sentiment",
+                    "MSCI EM ↔ Banking, NBFCs, Real Estate",
+                    "US markets ↔ IT Services, sentiment",
+                    "Asian markets ↔ Regional linkages"
+                ]
+            }
+        },
+        "api_endpoints": [
+            "GET /api/brain/global/overnight",
+            "GET /api/brain/global/correlations",
+            "GET /api/brain/global/signals",
+            "GET /api/brain/global/breakouts",
+            "GET /api/brain/global/sector-impacts"
+        ],
+        "features": [
+            "12 global markets tracking (US, Asia, Commodities, FX, Bonds)",
+            "EWMA correlation matrix (cost-effective DCC-GARCH alternative)",
+            "Pre-market signal generation (8:30 AM IST)",
+            "Correlation breakout alerts (>2σ divergence)",
+            "India-specific sector impact analysis",
+            "Async data fetching with 5-min cache"
+        ],
+        "use_cases": [
+            "Pre-market swing trading signals",
+            "Sector rotation strategies",
+            "Risk management (correlation monitoring)",
+            "Global macro sentiment analysis",
+            "Overnight gap prediction"
+        ]
+    }
+

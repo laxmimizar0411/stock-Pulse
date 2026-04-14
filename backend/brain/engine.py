@@ -115,6 +115,11 @@ class BrainEngine:
         self.timesfm_forecaster = None
         self.ensemble_forecaster = None
 
+        # Phase 5.2 subsystems — Global Correlation Engine
+        self.global_markets_fetcher = None
+        self.correlation_engine = None
+        self.premarket_signal_generator = None
+
         # Database reference
         self._db = None
 
@@ -195,9 +200,12 @@ class BrainEngine:
         # 16. Initialize Phase 5.1 — Foundation Time-Series Models
         await self._start_forecasting_models()
 
+        # 17. Initialize Phase 5.2 — Global Correlation Engine
+        await self._start_global_correlation_engine()
+
         self._started = True
         logger.info("=" * 60)
-        logger.info("Stock Pulse Brain READY — Phase 1+2+3+5.1 Active")
+        logger.info("Stock Pulse Brain READY — Phase 1+2+3+5.1+5.2 Active")
         logger.info("  Ingestion Pipeline: %s", "✅" if self.kafka_bridge else "❌")
         logger.info("  Feature Pipeline: %s", "✅" if self.feature_pipeline else "❌")
         logger.info("  Feature Store:    %s", "✅" if self.feature_store else "❌")
@@ -226,6 +234,7 @@ class BrainEngine:
         logger.info("  Reg. Calendar:    %s", "✅" if self.regulatory_calendar else "❌")
         logger.info("  Explainability:   %s", "✅" if self.explainability_engine else "❌")
         logger.info("  Forecasting (5.1): %s", "✅" if self.ensemble_forecaster else "❌")
+        logger.info("  Global Corr (5.2): %s", "✅" if self.global_markets_fetcher else "❌")
         logger.info("=" * 60)
 
     async def stop(self):
@@ -1343,6 +1352,37 @@ class BrainEngine:
             self.ensemble_forecaster = None
 
     # -----------------------------------------------------------------------
+    # Phase 5.2: Global Correlation Engine
+    # -----------------------------------------------------------------------
+
+    async def _start_global_correlation_engine(self):
+        """Initialize Phase 5.2 global correlation subsystems."""
+        logger.info("Initializing Phase 5.2: Global Correlation Engine...")
+        
+        try:
+            from brain.global_markets import (
+                GlobalMarketsFetcher,
+                CorrelationEngine,
+                PreMarketSignalGenerator
+            )
+            
+            # Initialize subsystems
+            self.global_markets_fetcher = GlobalMarketsFetcher()
+            self.correlation_engine = CorrelationEngine(span=60, min_periods=20)
+            self.premarket_signal_generator = PreMarketSignalGenerator()
+            
+            logger.info("✅ Global Correlation Engine: READY")
+            logger.info("   • Global Markets Data Fetcher (12 markets)")
+            logger.info("   • EWMA Correlation Matrix (60-day span)")
+            logger.info("   • Pre-Market Signal Generator (8:30 AM IST)")
+            
+        except Exception:
+            logger.exception("⚠️ Global Correlation Engine: FAILED")
+            self.global_markets_fetcher = None
+            self.correlation_engine = None
+            self.premarket_signal_generator = None
+
+    # -----------------------------------------------------------------------
     # Kafka (original)
     # -----------------------------------------------------------------------
 
@@ -1915,6 +1955,15 @@ class BrainEngine:
             }
         else:
             health["subsystems"]["forecasting_ensemble"] = {"status": "not_initialized"}
+
+        # Phase 5.2: Global Correlation Engine
+        if self.global_markets_fetcher:
+            health["subsystems"]["global_correlation_engine"] = {
+                "status": "healthy",
+                "info": self.global_markets_fetcher.get_market_summary(),
+            }
+        else:
+            health["subsystems"]["global_correlation_engine"] = {"status": "not_initialized"}
 
         # Overall status
         initialized_count = sum(
