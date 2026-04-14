@@ -110,6 +110,11 @@ class BrainEngine:
         self._regime_probabilities = {}
         self._regime_last_trained = None
 
+        # Phase 5.1 subsystems — Foundation Time-Series Models
+        self.chronos_forecaster = None
+        self.timesfm_forecaster = None
+        self.ensemble_forecaster = None
+
         # Database reference
         self._db = None
 
@@ -187,9 +192,12 @@ class BrainEngine:
         # 15. Initialize remaining Phase 3 subsystems (3.5-3.10)
         await self._start_phase3_remaining()
 
+        # 16. Initialize Phase 5.1 — Foundation Time-Series Models
+        await self._start_forecasting_models()
+
         self._started = True
         logger.info("=" * 60)
-        logger.info("Stock Pulse Brain READY — Phase 1+2+3 Active")
+        logger.info("Stock Pulse Brain READY — Phase 1+2+3+5.1 Active")
         logger.info("  Ingestion Pipeline: %s", "✅" if self.kafka_bridge else "❌")
         logger.info("  Feature Pipeline: %s", "✅" if self.feature_pipeline else "❌")
         logger.info("  Feature Store:    %s", "✅" if self.feature_store else "❌")
@@ -217,6 +225,7 @@ class BrainEngine:
         logger.info("  Dividend Intel:   %s", "✅" if self.dividend_intelligence else "❌")
         logger.info("  Reg. Calendar:    %s", "✅" if self.regulatory_calendar else "❌")
         logger.info("  Explainability:   %s", "✅" if self.explainability_engine else "❌")
+        logger.info("  Forecasting (5.1): %s", "✅" if self.ensemble_forecaster else "❌")
         logger.info("=" * 60)
 
     async def stop(self):
@@ -1299,6 +1308,41 @@ class BrainEngine:
             self.explainability_engine = None
 
     # -----------------------------------------------------------------------
+    # Phase 5.1: Foundation Time-Series Models
+    # -----------------------------------------------------------------------
+
+    async def _start_forecasting_models(self):
+        """Initialize Phase 5.1 forecasting subsystems."""
+        logger.info("Initializing Phase 5.1: Foundation Time-Series Models...")
+        
+        try:
+            from brain.forecasting import (
+                ChronosForecaster,
+                TimesFMForecaster,
+                EnsembleForecaster
+            )
+            
+            # Initialize individual forecasters
+            self.chronos_forecaster = ChronosForecaster(device="cpu")
+            self.timesfm_forecaster = TimesFMForecaster(device="cpu")
+            
+            # Initialize ensemble
+            self.ensemble_forecaster = EnsembleForecaster(device="cpu")
+            
+            # Load models asynchronously (non-blocking during startup)
+            # Models will load on-demand for first forecast request
+            logger.info("✅ Forecasting Models: READY (on-demand loading)")
+            logger.info("   • Chronos-Bolt-Base (swing 5-20d)")
+            logger.info("   • TimesFM 2.5 (positional 20-90d)")
+            logger.info("   • Ensemble (regime-conditional)")
+            
+        except Exception:
+            logger.exception("⚠️ Forecasting Models: FAILED")
+            self.chronos_forecaster = None
+            self.timesfm_forecaster = None
+            self.ensemble_forecaster = None
+
+    # -----------------------------------------------------------------------
     # Kafka (original)
     # -----------------------------------------------------------------------
 
@@ -1862,6 +1906,15 @@ class BrainEngine:
             }
         else:
             health["subsystems"]["explainability_engine"] = {"status": "not_initialized"}
+
+        # Phase 5.1: Foundation Time-Series Models
+        if self.ensemble_forecaster:
+            health["subsystems"]["forecasting_ensemble"] = {
+                "status": "healthy",
+                "info": self.ensemble_forecaster.get_model_info(),
+            }
+        else:
+            health["subsystems"]["forecasting_ensemble"] = {"status": "not_initialized"}
 
         # Overall status
         initialized_count = sum(

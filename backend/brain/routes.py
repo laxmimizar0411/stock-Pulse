@@ -31,7 +31,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from brain.engine import brain_engine
 from brain.events.topics import ALL_TOPICS
@@ -1731,4 +1731,304 @@ async def get_phase3_complete_summary():
         },
         "total_api_endpoints": 30,
     }
+
+
+
+# =====================================================================
+# Phase 5.1: Foundation Time-Series Models
+# =====================================================================
+
+@router.get("/forecast/status")
+async def get_forecasting_status():
+    """Get forecasting models status."""
+    if not brain_engine.ensemble_forecaster:
+        raise HTTPException(status_code=503, detail="Forecasting models not initialized")
+    
+    return brain_engine.ensemble_forecaster.get_model_info()
+
+
+class ForecastRequest(BaseModel):
+    symbol: str
+    horizon: int = Field(..., ge=1, le=90, description="Forecast horizon in days (5-90)")
+    regime: Optional[str] = Field("unknown", description="Market regime: bull/bear/sideways/unknown")
+    use_meta_learner: bool = Field(False, description="Use trained meta-learner for weights")
+
+
+class ForecastSwingRequest(BaseModel):
+    symbol: str
+    horizon: int = Field(..., ge=5, le=20, description="Swing forecast horizon in days (5-20)")
+    context_length: Optional[int] = Field(None, description="Number of historical points to use")
+
+
+class ForecastPositionalRequest(BaseModel):
+    symbol: str
+    horizon: int = Field(..., ge=20, le=90, description="Positional forecast horizon in days (20-90)")
+    context_length: Optional[int] = Field(None, description="Number of historical points to use")
+
+
+@router.post("/forecast/swing")
+async def forecast_swing(request: ForecastSwingRequest):
+    """
+    Generate swing trading forecast (5-20 days) using Chronos-Bolt-Base.
+    
+    Optimized for short-term swing trades with fast CPU inference.
+    """
+    if not brain_engine.chronos_forecaster:
+        raise HTTPException(status_code=503, detail="Chronos forecaster not initialized")
+    
+    # Fetch historical data for the symbol
+    try:
+        # First, try to get data from MongoDB (populated by Groww pipeline)
+        historical_data = None
+        
+        if brain_engine.db is not None:
+            try:
+                # Query prices collection
+                prices_cursor = brain_engine.db.prices.find(
+                    {"symbol": request.symbol},
+                    {"_id": 0, "close": 1, "timestamp": 1}
+                ).sort("timestamp", 1).limit(300)  # Last ~1 year of data
+                
+                prices_list = await prices_cursor.to_list(length=300)
+                
+                if prices_list and len(prices_list) >= 10:
+                    historical_data = [p["close"] for p in prices_list]
+                    logger.info(f"✅ Found {len(historical_data)} prices for {request.symbol} in MongoDB")
+            except Exception as e:
+                logger.warning(f"MongoDB fetch failed: {str(e)}")
+        
+        # Fallback to yfinance if MongoDB doesn't have data
+        if not historical_data:
+            import yfinance as yf
+            
+            logger.info(f"Fetching {request.symbol} from yfinance...")
+            symbol_variants = [
+                f"{request.symbol}.NS",
+                f"{request.symbol}.BO",
+                request.symbol,
+            ]
+            
+            hist = None
+            for variant in symbol_variants:
+                try:
+                    ticker = yf.Ticker(variant)
+                    hist = ticker.history(period="1y")
+                    if not hist.empty:
+                        break
+                except:
+                    continue
+            
+            if hist is None or hist.empty:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No historical data found for {request.symbol}. Try: RELIANCE, TCS, INFY, HDFCBANK"
+                )
+            
+            historical_data = hist["Close"].tolist()
+        
+        if not historical_data or len(historical_data) < 10:
+            raise HTTPException(status_code=400, detail="Insufficient historical data (need at least 10 points)")
+        
+        # Generate forecast
+        forecast_result = await brain_engine.chronos_forecaster.forecast(
+            historical_data=historical_data,
+            horizon=request.horizon,
+            context_length=request.context_length
+        )
+        
+        forecast_result["symbol"] = request.symbol
+        forecast_result["forecast_type"] = "swing"
+        
+        return forecast_result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Swing forecast error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Forecast failed: {str(e)}")
+
+
+@router.post("/forecast/positional")
+async def forecast_positional(request: ForecastPositionalRequest):
+    """
+    Generate positional trading forecast (20-90 days) using TimesFM 2.5.
+    
+    Optimized for longer-term positional trades with probabilistic quantiles.
+    """
+    if not brain_engine.timesfm_forecaster:
+        raise HTTPException(status_code=503, detail="TimesFM forecaster not initialized")
+    
+    # Fetch historical data
+    try:
+        import yfinance as yf
+        
+        # Try different suffix variations
+        symbol_variants = [
+            f"{request.symbol}.NS",
+            f"{request.symbol}.BO",
+            request.symbol,
+        ]
+        
+        hist = None
+        ticker_symbol = None
+        
+        for variant in symbol_variants:
+            try:
+                ticker = yf.Ticker(variant)
+                hist = ticker.history(period="2y")  # Longer history for positional
+                if not hist.empty:
+                    ticker_symbol = variant
+                    break
+            except:
+                continue
+        
+        if hist is None or hist.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No historical data found for {request.symbol}"
+            )
+        
+        historical_data = hist["Close"].tolist()
+        
+        if len(historical_data) < 20:
+            raise HTTPException(status_code=400, detail="Insufficient historical data (need at least 20 points)")
+        
+        # Generate forecast
+        forecast_result = await brain_engine.timesfm_forecaster.forecast(
+            historical_data=historical_data,
+            horizon=request.horizon,
+            context_length=request.context_length
+        )
+        
+        forecast_result["symbol"] = request.symbol
+        forecast_result["forecast_type"] = "positional"
+        
+        return forecast_result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Positional forecast error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Forecast failed: {str(e)}")
+
+
+@router.post("/forecast/ensemble")
+async def forecast_ensemble(request: ForecastRequest):
+    """
+    Generate regime-conditional ensemble forecast combining Chronos + TimesFM.
+    
+    Uses XGBoost meta-learner to optimize weights based on current market regime.
+    Horizon: 5-90 days (flexible across swing and positional timeframes).
+    """
+    if not brain_engine.ensemble_forecaster:
+        raise HTTPException(status_code=503, detail="Ensemble forecaster not initialized")
+    
+    # Fetch historical data
+    try:
+        import yfinance as yf
+        
+        period = "1y" if request.horizon <= 30 else "2y"
+        
+        # Try different suffix variations
+        symbol_variants = [
+            f"{request.symbol}.NS",
+            f"{request.symbol}.BO",
+            request.symbol,
+        ]
+        
+        hist = None
+        ticker_symbol = None
+        
+        for variant in symbol_variants:
+            try:
+                ticker = yf.Ticker(variant)
+                hist = ticker.history(period=period)
+                if not hist.empty:
+                    ticker_symbol = variant
+                    break
+            except:
+                continue
+        
+        if hist is None or hist.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No historical data found for {request.symbol}"
+            )
+        
+        historical_data = hist["Close"].tolist()
+        
+        if len(historical_data) < 10:
+            raise HTTPException(status_code=400, detail="Insufficient historical data")
+        
+        # Validate regime
+        valid_regimes = ["bull", "bear", "sideways", "unknown"]
+        regime = request.regime.lower() if request.regime else "unknown"
+        if regime not in valid_regimes:
+            regime = "unknown"
+        
+        # Generate ensemble forecast
+        forecast_result = await brain_engine.ensemble_forecaster.forecast(
+            historical_data=historical_data,
+            horizon=request.horizon,
+            regime=regime,  # type: ignore
+            use_meta_learner=request.use_meta_learner
+        )
+        
+        forecast_result["symbol"] = request.symbol
+        forecast_result["forecast_type"] = "ensemble"
+        
+        return forecast_result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ensemble forecast error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Forecast failed: {str(e)}")
+
+
+@router.get("/phase5_1/summary")
+async def get_phase5_1_summary():
+    """Phase 5.1 summary: Foundation Time-Series Models."""
+    return {
+        "phase": "5.1",
+        "name": "Foundation Time-Series Models",
+        "status": "operational" if brain_engine.ensemble_forecaster else "not_initialized",
+        "models": {
+            "chronos_bolt_base": {
+                "name": "amazon/chronos-bolt-base",
+                "parameters": "205M",
+                "use_case": "Swing trading (5-20 days)",
+                "type": "T5 encoder-decoder",
+                "loaded": brain_engine.chronos_forecaster.loaded if brain_engine.chronos_forecaster else False
+            },
+            "timesfm_2_5": {
+                "name": "google/timesfm-2.5-200m-pytorch",
+                "parameters": "200M",
+                "use_case": "Positional trading (20-90 days)",
+                "type": "Decoder-only transformer",
+                "loaded": brain_engine.timesfm_forecaster.loaded if brain_engine.timesfm_forecaster else False
+            },
+            "ensemble": {
+                "name": "Regime-Conditional Ensemble",
+                "type": "XGBoost meta-learner",
+                "use_case": "Combined forecast (5-90 days)",
+                "regimes": ["bull", "bear", "sideways", "unknown"],
+                "loaded": brain_engine.ensemble_forecaster.models_loaded if brain_engine.ensemble_forecaster else False
+            }
+        },
+        "api_endpoints": [
+            "GET /api/brain/forecast/status",
+            "POST /api/brain/forecast/swing (5-20d, Chronos)",
+            "POST /api/brain/forecast/positional (20-90d, TimesFM)",
+            "POST /api/brain/forecast/ensemble (5-90d, Combined)"
+        ],
+        "features": [
+            "Zero-shot forecasting (no training required)",
+            "Probabilistic forecasts with quantiles",
+            "Regime-conditional ensemble weights",
+            "CPU-optimized inference",
+            "On-demand model loading"
+        ]
+    }
+
 
