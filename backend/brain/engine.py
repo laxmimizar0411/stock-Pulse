@@ -120,6 +120,12 @@ class BrainEngine:
         self.correlation_engine = None
         self.premarket_signal_generator = None
 
+        # Phase 5.3 subsystems — Portfolio Optimization (BL + HRP)
+        self.bl_optimizer = None
+        self.hrp_optimizer = None
+        self.combined_optimizer = None
+        self.walk_forward_validator = None
+
         # Database reference
         self._db = None
 
@@ -203,9 +209,12 @@ class BrainEngine:
         # 17. Initialize Phase 5.2 — Global Correlation Engine
         await self._start_global_correlation_engine()
 
+        # 18. Initialize Phase 5.3 — Portfolio Optimization
+        await self._start_portfolio_optimization()
+
         self._started = True
         logger.info("=" * 60)
-        logger.info("Stock Pulse Brain READY — Phase 1+2+3+5.1+5.2 Active")
+        logger.info("Stock Pulse Brain READY — Phase 1+2+3+5.1+5.2+5.3 Active")
         logger.info("  Ingestion Pipeline: %s", "✅" if self.kafka_bridge else "❌")
         logger.info("  Feature Pipeline: %s", "✅" if self.feature_pipeline else "❌")
         logger.info("  Feature Store:    %s", "✅" if self.feature_store else "❌")
@@ -235,6 +244,7 @@ class BrainEngine:
         logger.info("  Explainability:   %s", "✅" if self.explainability_engine else "❌")
         logger.info("  Forecasting (5.1): %s", "✅" if self.ensemble_forecaster else "❌")
         logger.info("  Global Corr (5.2): %s", "✅" if self.global_markets_fetcher else "❌")
+        logger.info("  Portfolio Opt(5.3): %s", "✅" if self.combined_optimizer else "❌")
         logger.info("=" * 60)
 
     async def stop(self):
@@ -1383,6 +1393,51 @@ class BrainEngine:
             self.premarket_signal_generator = None
 
     # -----------------------------------------------------------------------
+    # Phase 5.3: Portfolio Optimization (BL + HRP)
+    # -----------------------------------------------------------------------
+
+    async def _start_portfolio_optimization(self):
+        """Initialize Phase 5.3 portfolio optimization subsystems."""
+        logger.info("Initializing Phase 5.3: Portfolio Optimization (BL + HRP)...")
+        
+        try:
+            from brain.portfolio import (
+                BlackLittermanOptimizer,
+                HRPOptimizer,
+                CombinedOptimizer,
+                WalkForwardValidator
+            )
+            
+            # Initialize optimizers
+            self.bl_optimizer = BlackLittermanOptimizer(
+                risk_free_rate=0.065,  # India 10Y bond
+                market_risk_premium=0.08
+            )
+            self.hrp_optimizer = HRPOptimizer()
+            self.combined_optimizer = CombinedOptimizer(
+                bl_weight=0.7,
+                hrp_weight=0.3
+            )
+            self.walk_forward_validator = WalkForwardValidator(
+                train_months=12,
+                test_months=1,
+                target_sharpe=2.0
+            )
+            
+            logger.info("✅ Portfolio Optimization: READY")
+            logger.info("   • Black-Litterman (AI views from forecasts)")
+            logger.info("   • HRP (Hierarchical Risk Parity)")
+            logger.info("   • Combined BL+HRP (70/30 blend)")
+            logger.info("   • Walk-Forward Validator (target Sharpe > 2.0)")
+            
+        except Exception:
+            logger.exception("⚠️ Portfolio Optimization: FAILED")
+            self.bl_optimizer = None
+            self.hrp_optimizer = None
+            self.combined_optimizer = None
+            self.walk_forward_validator = None
+
+    # -----------------------------------------------------------------------
     # Kafka (original)
     # -----------------------------------------------------------------------
 
@@ -1964,6 +2019,20 @@ class BrainEngine:
             }
         else:
             health["subsystems"]["global_correlation_engine"] = {"status": "not_initialized"}
+
+        # Phase 5.3: Portfolio Optimization
+        if self.combined_optimizer:
+            health["subsystems"]["portfolio_optimization"] = {
+                "status": "healthy",
+                "info": {
+                    "bl_optimizer": "ready",
+                    "hrp_optimizer": "ready",
+                    "combined_optimizer": "ready",
+                    "walk_forward_validator": "ready"
+                },
+            }
+        else:
+            health["subsystems"]["portfolio_optimization"] = {"status": "not_initialized"}
 
         # Overall status
         initialized_count = sum(
