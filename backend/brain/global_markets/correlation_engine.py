@@ -79,9 +79,13 @@ class CorrelationEngine:
         # Compute EWMA covariance matrix
         ewma_cov = returns.ewm(span=self.span, min_periods=self.min_periods).cov()
         
-        # Extract correlation from covariance
-        # Get latest covariance matrix
-        latest_cov = ewma_cov.iloc[-len(returns.columns):]
+        # Extract the latest covariance matrix
+        # ewm().cov() returns a MultiIndex DataFrame with (date, asset) as index
+        # We need to get the last date's covariance matrix
+        n_assets = len(returns.columns)
+        
+        # Get the last n_assets rows which correspond to the latest date
+        latest_cov = ewma_cov.iloc[-n_assets:].values
         
         # Convert covariance to correlation
         std_devs = np.sqrt(np.diag(latest_cov))
@@ -90,7 +94,14 @@ class CorrelationEngine:
         # Avoid division by zero
         std_matrix[std_matrix == 0] = 1
         
-        correlation_matrix = latest_cov / std_matrix
+        correlation_values = latest_cov / std_matrix
+        
+        # Create a proper DataFrame with market names as index and columns
+        correlation_matrix = pd.DataFrame(
+            correlation_values,
+            index=returns.columns,
+            columns=returns.columns
+        )
         
         # Store results
         self.correlation_matrix = correlation_matrix

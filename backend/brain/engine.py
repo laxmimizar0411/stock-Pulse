@@ -215,9 +215,12 @@ class BrainEngine:
         # 18. Initialize Phase 5.3 — Portfolio Optimization
         await self._start_portfolio_optimization()
 
+        # 19. Initialize Phase 5.6 — Chart Pattern Detection
+        await self._start_chart_pattern_detection()
+
         self._started = True
         logger.info("=" * 60)
-        logger.info("Stock Pulse Brain READY — Phase 1+2+3+5.1+5.2+5.3 Active")
+        logger.info("Stock Pulse Brain READY — Phase 1+2+3+5.1+5.2+5.3+5.6 Active")
         logger.info("  Ingestion Pipeline: %s", "✅" if self.kafka_bridge else "❌")
         logger.info("  Feature Pipeline: %s", "✅" if self.feature_pipeline else "❌")
         logger.info("  Feature Store:    %s", "✅" if self.feature_store else "❌")
